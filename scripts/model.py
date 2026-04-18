@@ -3,7 +3,7 @@ import torch.nn as nn
 from torchvision import models
 
 class ScaffoldedPointPredictor(nn.Module):
-    def __init__(self, num_joints=21, num_verts=778, num_vectors=9):
+    def __init__(self, num_joints=21, num_verts=778, num_vectors=15):
         super(ScaffoldedPointPredictor, self).__init__()
         
         # 1. Shared Backbone: ResNet18 Feature Extraction (512 features)

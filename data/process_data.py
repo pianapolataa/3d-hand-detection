@@ -8,8 +8,8 @@ from sklearn.model_selection import train_test_split
 
 # --- CONFIGURATION ---
 DATA_DIR = '../FreiHAND_pub_v2'
-OUT_FILE = './train_data_400_verts.npz'
-EVAL_FILE = './eval_data_400_verts.npz' 
+OUT_FILE = './train_data_600_verts.npz'
+EVAL_FILE = './eval_data_600_verts.npz' 
 
 
 NUM_SAMPLES = 32560
@@ -21,7 +21,7 @@ IMG_SIZE = 224
 # --- MESH RESOLUTION CONFIG ---
 # Set this to 778 for full, 389 for half, or 194 for quarter res.
 # 778 is not easily divisible, so we use linear spacing to get an exact count.
-TARGET_VERTS = 400
+TARGET_VERTS = 600
 
 
 def preprocess_data():

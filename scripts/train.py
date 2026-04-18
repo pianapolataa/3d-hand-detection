@@ -11,13 +11,13 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPOCHS = 300
 BATCH_SIZE = 64 
 LEARNING_RATE = 1e-4
-NPZ_PATH = '../data/train_data_70_verts.npz' 
+NPZ_PATH = '../data/train_data_70_verts_15_vectors.npz' 
 NUM_VERTS = 70 # Adjustable parameter for the mesh resolution
 
 # Loss Weights
-W_JOINT = 3.0 
+W_JOINT = 5.0 
 W_MESH = 1.0
-W_GEOM = 3.0    # Weight for the explicit Vector Head
+W_GEOM = 5.0    # Weight for the explicit Vector Head
 
 # Joint Index Constants (MANO)
 TIP_IDS = [4, 8, 12, 16, 20] 
@@ -27,17 +27,27 @@ OTHER_TIPS = [8, 12, 16, 20]
 
 # We need to calculate the GROUND TRUTH vectors from the GT joints
 def get_gt_vectors(j):
-    # Thumb Tip -> Other Tips
-    thumb_tip = j[:, THUMB_TIP, :].unsqueeze(1)
-    other_tips = j[:, OTHER_TIPS, :]
-    v_to_thumb = other_tips - thumb_tip
+    # j shape: [Batch, 21, 3]
+    tips = j[:, TIP_IDS, :] # [Batch, 5, 3]
     
-    # MCP -> Fingertip
-    tips = j[:, TIP_IDS, :]
+    # 1. INTER-TIP VECTORS (5 choose 2 = 10 pairs)
+    # This captures the 'Spread' and 'Pinch' of the whole hand
+    inter_tip_list = []
+    for i in range(5):
+        for k in range(i + 1, 5):
+            # Vector from Tip I to Tip K
+            v = tips[:, k, :] - tips[:, i, :]
+            inter_tip_list.append(v.unsqueeze(1))
+    
+    v_inter_tips = torch.cat(inter_tip_list, dim=1) # [Batch, 10, 3]
+    
+    # 2. MCP -> FINGERTIP VECTORS (5 bone vectors)
+    # This captures the 'Flexion' and bone length
     mcps = j[:, MCP_IDS, :]
-    v_mcp_tip = tips - mcps
+    v_mcp_tip = tips - mcps # [Batch, 5, 3]
     
-    return torch.cat([v_to_thumb, v_mcp_tip], dim=1) # [Batch, 9, 3]
+    # TOTAL VECTORS: 10 + 5 = 15
+    return torch.cat([v_inter_tips, v_mcp_tip], dim=1) # [Batch, 15, 3]
 
 def hand_reconstruction_loss(pred_joints, pred_vectors, gt_joints, pred_verts, gt_verts):
     l1 = nn.L1Loss()
@@ -61,7 +71,7 @@ def hand_reconstruction_loss(pred_joints, pred_vectors, gt_joints, pred_verts, g
     
     # 3. Vector Loss (Orientation Head Supervision)
     gt_vectors = get_gt_vectors(gj)
-    loss_geom = l1(pred_vectors.view(-1, 9, 3), gt_vectors)
+    loss_geom = l1(pred_vectors.view(-1, 15, 3), gt_vectors)
 
     # Combined Weighted Loss
     return (W_JOINT * loss_j) + (W_MESH * loss_v) + (W_GEOM * loss_geom)

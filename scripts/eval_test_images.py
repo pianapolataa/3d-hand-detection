@@ -8,12 +8,14 @@ from model import ScaffoldedPointPredictor
 
 # --- CONFIGURATION ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
-MODEL_PATH = 'checkpoints/model_70_verts.pth'
+MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
+# MODEL_PATH = 'checkpoints/model_70_verts.pth' 
+# MODEL_PATH = 'checkpoints/model_70_verts_15_vectors.pth'
 IMAGE_FOLDER = 'eval_images' 
 IMG_SIZE = 224
 # NUM_VERTS = 778 # Matches your "original distance" training setup
-NUM_VERTS = 70 # Matches your "original distance" training setup
+NUM_VERTS = 778 # Matches your "original distance" training setup
+NUM_VECTORS = 9
 
 # Skeletal Connection Mapping (MANO Standard)
 SKEL_CONNECTIONS = [
@@ -24,7 +26,7 @@ SKEL_CONNECTIONS = [
 # --- 1. LOAD MODEL ---
 print(f"🔄 Loading Super-Fusion model from {MODEL_PATH}...")
 # Note: num_vectors defaults to 9 in our model.py
-model = ScaffoldedPointPredictor(num_joints=21, num_verts=NUM_VERTS).to(DEVICE)
+model = ScaffoldedPointPredictor(num_joints=21, num_verts=NUM_VERTS, num_vectors=NUM_VECTORS).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 

@@ -11,13 +11,13 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPOCHS = 300
 BATCH_SIZE = 64 
 LEARNING_RATE = 1e-4
-NPZ_PATH = '../data/train_data_70_verts.npz' 
-NUM_VERTS = 70 # Adjustable parameter for the mesh resolution
+NPZ_PATH = '../data/train_data_600_verts.npz' 
+NUM_VERTS = 600 # Adjustable parameter for the mesh resolution
 
 # Loss Weights
-W_JOINT = 5.0 
+W_JOINT = 3.0 
 W_MESH = 1.0
-W_GEOM = 5.0    # Weight for the explicit Vector Head
+W_GEOM = 4.0    # Weight for the explicit Vector Head
 
 # Joint Index Constants (MANO)
 TIP_IDS = [4, 8, 12, 16, 20] 
@@ -134,7 +134,7 @@ for epoch in range(EPOCHS):
         # If the model improved, save it and reset the counter
         best_val_loss = avg_val_loss
         patience_counter = 0
-        torch.save(model.state_dict(), "checkpoints/model_70_verts_15_vectors.pth")
+        torch.save(model.state_dict(), "checkpoints/model_600_verts_15_vectors.pth")
         print(f"🌟 New Best Model Saved!")
     else:
         # If the model didn't improve, increment the counter

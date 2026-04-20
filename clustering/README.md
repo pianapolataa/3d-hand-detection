@@ -1,94 +1,87 @@
 # Camera-Angle Clustering
 
-This folder contains a self-contained pipeline for clustering hand images by camera angle using the predicted 3D hand coordinate frame.
+This pipeline groups hand images by viewpoint using the model-predicted 3D hand pose.
 
-The pipeline:
+## What The Pipeline Does
 
-1. Loads masked RGB images from `data/train_data_600_verts.npz`.
-2. Runs the trained reconstruction model checkpoint.
-3. Extracts the predicted 21 joints.
-4. Builds a 6D hand-frame feature per image:
-   - `v1 = normalized cross(wrist -> index_mcp, wrist -> pinky_mcp)`
-   - `v2 = normalized (wrist -> middle_mcp)`
-5. Clusters those 6D features with a scratch cosine k-means implementation.
-6. Saves cluster assignments, preview image grids, and 3D coordinate-axis visualizations.
+1. Loads a processed split of masked RGB hand images.
+2. Runs the trained 3D hand reconstruction network in inference mode.
+3. Extracts predicted joints for each image.
+4. Builds a 6D coordinate-frame feature per sample:
+   - first 3 values: normalized palm normal computed from wrist-to-index-MCP and wrist-to-pinky-MCP
+   - next 3 values: normalized wrist-to-middle-MCP direction
+5. Clusters these 6D vectors using cosine (spherical) k-means.
+6. Ranks samples within each cluster by cosine similarity to the cluster center.
+7. Writes machine-readable outputs plus visual diagnostics.
 
-One small repo-specific note: the preprocessing script on disk is `data/process_data.py`.
+## How The Core Logic Works
 
-## Run
+### Inference and feature extraction
 
-From the repo root:
+- Images are normalized with ImageNet statistics before model inference.
+- The model predicts joints, auxiliary vectors, and mesh vertices; clustering uses the predicted joints.
+- Coordinate-frame vectors are L2-normalized, then concatenated into one 6D feature vector per image.
+
+### Clustering behavior
+
+- Features are normalized row-wise before clustering.
+- Cluster centers are initialized with a distance-aware probabilistic seeding strategy.
+- Empty clusters are re-seeded from random samples.
+- Multiple initializations are tried; the run with the highest cosine objective is kept.
+
+### Ranking and diagnostics
+
+- For each cluster, samples are sorted by similarity to the cluster center.
+- Preview figures show representative examples and associated 3D axes.
+- A dedicated axes visualization shows only joints plus the two frame directions:
+  - red: palm normal
+  - blue: wrist-to-middle-MCP direction
+
+## Outputs You Get
+
+Each run creates:
+
+- coordinate-frame dataset with sample index mapping back to original data ids
+- cluster assignments and centers
+- cluster size summary (CSV)
+- per-cluster ranked membership table with similarity scores (CSV)
+- preview montage of top representatives per cluster
+- 3D axes-only visualization for viewpoint sanity checking
+
+## Ways To Run
+
+Run from repository root.
+
+### 1) Single run (local)
 
 ```bash
 python clustering/run_camera_angle_clustering.py
 ```
 
-Useful flags:
+### 2) Single run with custom settings
 
 ```bash
 python clustering/run_camera_angle_clustering.py \
   --num-clusters 4 \
   --batch-size 64 \
   --num-verts 600 \
+  --max-iters 100 \
+  --n-init 5 \
   --samples-per-cluster 6
 ```
 
-Outputs are written to `clustering/outputs/`.
-
-The processed FreiHAND dataset stays under `data/`, for example:
+### 3) Choose split and explicit paths
 
 ```bash
-data/train_data_600_verts.npz
-data/eval_data_600_verts.npz
+python clustering/run_camera_angle_clustering.py \
+  --split train \
+  --npz-path data/train_data_600_verts.npz \
+  --checkpoint-path scripts/checkpoints/model_600_verts_15_vectors.pth \
+  --output-dir clustering/outputs/manual_run
 ```
 
-The preprocessing step also preserves the original FreiHAND sample ids in:
+## Practical Notes
 
-```bash
-sample_indices_train
-sample_indices_val
-sample_indices_test
-```
-
-So if `sample_indices_train[2] == 157`, then processed dataset row `2` came from FreiHAND image `00000157.jpg`.
-
-## SLURM
-
-Submit the full clustering job with:
-
-```bash
-sbatch clustering/run_camera_angle_clustering.slurm
-```
-
-The default SLURM sweep runs:
-
-- `NUM_VERTS in {600, 70}`
-- `k in {4, 5, 6, 7, 8}`
-
-Common overrides:
-
-```bash
-sbatch --export=ALL,ENV_NAME=3dhand,MODEL_VERTS_LIST="600 70",K_VALUES="4 5 6 7 8",BATCH_SIZE=64 clustering/run_camera_angle_clustering.slurm
-```
-
-The SLURM launcher writes a timestamped sweep directory inside `clustering/outputs/`, and then one subdirectory per combo such as:
-
-```bash
-clustering/outputs/<RUN_ID>/verts600_k4/
-clustering/outputs/<RUN_ID>/verts600_k5/
-clustering/outputs/<RUN_ID>/verts70_k4/
-...
-```
-
-Each combo directory includes:
-
-- `train_coord_frames.npz`
-- `train_clusters_k<k>.npz`
-- `train_cluster_summary_k<k>.csv`
-- `train_cluster_previews_k<k>.png`
-- `train_cluster_axes_k<k>.png`
-
-The `train_cluster_axes_k<k>.png` artifact plots the two coordinate-frame vectors used for clustering:
-
-- red = palm normal
-- blue = wrist -> middle MCP
+- The number of vertices and vectors must match both dataset and checkpoint.
+- If not specified, model dimensions are inferred directly from checkpoint weights.
+- Device selection defaults to CUDA when available, otherwise CPU.

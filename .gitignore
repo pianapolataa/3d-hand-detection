@@ -6,4 +6,7 @@ scripts/checkpoints/best_point_model_test.pth
 *.egg-info/
 clustering/outputs/
 *.slurm
-
+_pycache__/
+*.log
+*.out
+*.err

@@ -13,8 +13,6 @@ from cosine_kmeans import CosineKMeans
 from frame_utils import (
     DEFAULT_BATCH_SIZE,
     DEFAULT_NUM_CLUSTERS,
-    DEFAULT_NUM_VECTORS,
-    DEFAULT_NUM_VERTS,
     DEFAULT_RANDOM_SEED,
     WRIST_ID,
     NUM_JOINTS,
@@ -25,6 +23,7 @@ from frame_utils import (
     infer_model_dims_from_checkpoint,
     preprocess_image_batch,
     resolve_existing_path,
+    safe_normalize,
 )
 
 
@@ -57,8 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-path", type=Path, default=DEFAULT_CHECKPOINT_PATH)
     parser.add_argument("--split", choices=sorted(SPLIT_TO_KEYS.keys()), default="train")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--num-verts", type=int, default=DEFAULT_NUM_VERTS)
-    parser.add_argument("--num-vectors", type=int, default=DEFAULT_NUM_VECTORS)
+    parser.add_argument("--num-verts", type=int, default=None)
+    parser.add_argument("--num-vectors", type=int, default=None)
     parser.add_argument("--num-clusters", type=int, default=DEFAULT_NUM_CLUSTERS)
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--max-iters", type=int, default=100)
@@ -139,25 +138,60 @@ def save_cluster_summary_csv(output_path: Path, labels: np.ndarray) -> None:
             writer.writerow([cluster_id, count])
 
 
+def rank_cluster_members(
+    coord_frames: np.ndarray,
+    labels: np.ndarray,
+    centers: np.ndarray,
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    normalized_features = safe_normalize(coord_frames.astype(np.float32))
+    normalized_centers = safe_normalize(centers.astype(np.float32))
+    ranked_members_by_cluster: dict[int, np.ndarray] = {}
+    ranked_scores_by_cluster: dict[int, np.ndarray] = {}
+
+    for cluster_id in np.unique(labels).tolist():
+        members = np.flatnonzero(labels == cluster_id)
+        member_scores = normalized_features[members] @ normalized_centers[cluster_id]
+        rank_order = np.argsort(-member_scores, kind="stable")
+        ranked_members_by_cluster[cluster_id] = members[rank_order]
+        ranked_scores_by_cluster[cluster_id] = member_scores[rank_order].astype(np.float32)
+
+    return ranked_members_by_cluster, ranked_scores_by_cluster
+
+
+def save_cluster_rankings_csv(
+    output_path: Path,
+    ranked_members_by_cluster: dict[int, np.ndarray],
+    ranked_scores_by_cluster: dict[int, np.ndarray],
+    sample_indices: np.ndarray,
+) -> None:
+    with output_path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["cluster_id", "rank", "dataset_index", "source_sample_index", "cosine_similarity"])
+        for cluster_id in sorted(ranked_members_by_cluster):
+            ranked_members = ranked_members_by_cluster[cluster_id]
+            ranked_scores = ranked_scores_by_cluster[cluster_id]
+            for rank, (sample_idx, score) in enumerate(zip(ranked_members.tolist(), ranked_scores.tolist()), start=1):
+                writer.writerow([cluster_id, rank, sample_idx, int(sample_indices[sample_idx]), f"{score:.6f}"])
+
+
 def save_cluster_preview_grid(
     images: np.ndarray,
     pred_joints: np.ndarray,
-    labels: np.ndarray,
     sample_indices: np.ndarray,
+    ranked_members_by_cluster: dict[int, np.ndarray],
+    ranked_scores_by_cluster: dict[int, np.ndarray],
     output_path: Path,
     samples_per_cluster: int,
-    seed: int,
 ) -> None:
-    cluster_ids = np.unique(labels)
-    rng = np.random.default_rng(seed)
+    cluster_ids = np.array(sorted(ranked_members_by_cluster))
     num_rows = len(cluster_ids)
     num_cols = samples_per_cluster * 2
     fig = plt.figure(figsize=(4.6 * samples_per_cluster, 3.6 * num_rows))
 
     for row_idx, cluster_id in enumerate(cluster_ids.tolist()):
-        members = np.flatnonzero(labels == cluster_id)
-        sample_size = min(samples_per_cluster, len(members))
-        chosen = rng.choice(members, size=sample_size, replace=False)
+        ranked_members = ranked_members_by_cluster[cluster_id]
+        ranked_scores = ranked_scores_by_cluster[cluster_id]
+        sample_size = min(samples_per_cluster, len(ranked_members))
 
         for sample_slot in range(samples_per_cluster):
             image_subplot_idx = row_idx * num_cols + (2 * sample_slot) + 1
@@ -172,7 +206,8 @@ def save_cluster_preview_grid(
                 ax_axes.axis("off")
                 continue
 
-            sample_idx = int(chosen[sample_slot])
+            sample_idx = int(ranked_members[sample_slot])
+            similarity = float(ranked_scores[sample_slot])
             original_idx = int(sample_indices[sample_idx])
             joints = pred_joints[sample_idx]
             wrist = joints[WRIST_ID]
@@ -181,7 +216,10 @@ def save_cluster_preview_grid(
             middle_axis = middle_axis[0]
 
             ax_img.imshow(images[sample_idx])
-            ax_img.set_title(f"c{cluster_id} | ds {sample_idx} | src {original_idx}", fontsize=9)
+            ax_img.set_title(
+                f"c{cluster_id} #{sample_slot + 1} | sim {similarity:.3f}\nds {sample_idx} | src {original_idx}",
+                fontsize=9,
+            )
 
             ax_axes.scatter(joints[:, 0], joints[:, 1], joints[:, 2], s=14, c="black", alpha=0.65)
             ax_axes.scatter(wrist[0], wrist[1], wrist[2], s=40, c="orange", marker="o")
@@ -200,7 +238,7 @@ def save_cluster_preview_grid(
             ax_axes.set_xticks([])
             ax_axes.set_yticks([])
             ax_axes.set_zticks([])
-            ax_axes.set_title("axes", fontsize=9)
+            ax_axes.set_title(f"axes #{sample_slot + 1}", fontsize=9)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
@@ -219,22 +257,21 @@ def _set_axes_equal(ax, joints: np.ndarray) -> None:
 
 def save_cluster_axes_grid(
     pred_joints: np.ndarray,
-    labels: np.ndarray,
     sample_indices: np.ndarray,
+    ranked_members_by_cluster: dict[int, np.ndarray],
+    ranked_scores_by_cluster: dict[int, np.ndarray],
     output_path: Path,
     samples_per_cluster: int,
-    seed: int,
 ) -> None:
-    cluster_ids = np.unique(labels)
-    rng = np.random.default_rng(seed)
+    cluster_ids = np.array(sorted(ranked_members_by_cluster))
     num_rows = len(cluster_ids)
     num_cols = samples_per_cluster
     fig = plt.figure(figsize=(4.5 * num_cols, 4.0 * num_rows))
 
     for row_idx, cluster_id in enumerate(cluster_ids.tolist()):
-        members = np.flatnonzero(labels == cluster_id)
-        sample_size = min(samples_per_cluster, len(members))
-        chosen = rng.choice(members, size=sample_size, replace=False)
+        ranked_members = ranked_members_by_cluster[cluster_id]
+        ranked_scores = ranked_scores_by_cluster[cluster_id]
+        sample_size = min(samples_per_cluster, len(ranked_members))
 
         for col_idx in range(num_cols):
             subplot_idx = row_idx * num_cols + col_idx + 1
@@ -243,7 +280,8 @@ def save_cluster_axes_grid(
                 ax.axis("off")
                 continue
 
-            sample_idx = int(chosen[col_idx])
+            sample_idx = int(ranked_members[col_idx])
+            similarity = float(ranked_scores[col_idx])
             original_idx = int(sample_indices[sample_idx])
             joints = pred_joints[sample_idx]
             wrist = joints[WRIST_ID]
@@ -268,7 +306,10 @@ def save_cluster_axes_grid(
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_zticks([])
-            ax.set_title(f"c{cluster_id} | ds {sample_idx} | src {original_idx}", fontsize=9)
+            ax.set_title(
+                f"c{cluster_id} #{col_idx + 1} | sim {similarity:.3f}\nds {sample_idx} | src {original_idx}",
+                fontsize=9,
+            )
 
     fig.suptitle("Predicted Hand Coordinate Axes: red=palm normal, blue=wrist->middle MCP", fontsize=14)
     fig.tight_layout()
@@ -283,32 +324,34 @@ def main() -> None:
     device = resolve_device(args.device)
     images, detected_num_verts, sample_indices = load_images(args.npz_path, args.split)
     checkpoint_dims = infer_model_dims_from_checkpoint(args.checkpoint_path)
+    resolved_num_verts = checkpoint_dims["num_verts"] if args.num_verts is None else args.num_verts
+    resolved_num_vectors = checkpoint_dims["num_vectors"] if args.num_vectors is None else args.num_vectors
 
-    if args.num_verts != detected_num_verts:
+    if resolved_num_verts != detected_num_verts:
         raise ValueError(
-            f"--num-verts={args.num_verts} does not match dataset verts={detected_num_verts} "
+            f"--num-verts={resolved_num_verts} does not match dataset verts={detected_num_verts} "
             f"for {args.npz_path}"
         )
-    if args.num_verts != checkpoint_dims["num_verts"]:
+    if resolved_num_verts != checkpoint_dims["num_verts"]:
         raise ValueError(
-            f"--num-verts={args.num_verts} does not match checkpoint verts={checkpoint_dims['num_verts']} "
+            f"--num-verts={resolved_num_verts} does not match checkpoint verts={checkpoint_dims['num_verts']} "
             f"for {args.checkpoint_path}"
         )
-    if args.num_vectors != checkpoint_dims["num_vectors"]:
+    if resolved_num_vectors != checkpoint_dims["num_vectors"]:
         raise ValueError(
-            f"--num-vectors={args.num_vectors} does not match checkpoint vectors={checkpoint_dims['num_vectors']} "
+            f"--num-vectors={resolved_num_vectors} does not match checkpoint vectors={checkpoint_dims['num_vectors']} "
             f"for {args.checkpoint_path}"
         )
 
     print(f"Using device: {device}")
     print(f"Loaded {len(images)} images from split '{args.split}'")
-    print(f"NUM_VERTS={args.num_verts} | NUM_VECTORS={args.num_vectors}")
+    print(f"NUM_VERTS={resolved_num_verts} | NUM_VECTORS={resolved_num_vectors}")
 
     model = build_inference_model(
         checkpoint_path=args.checkpoint_path,
         num_joints=checkpoint_dims["num_joints"],
-        num_verts=args.num_verts,
-        num_vectors=args.num_vectors,
+        num_verts=resolved_num_verts,
+        num_vectors=resolved_num_vectors,
         device=device,
     )
 
@@ -355,33 +398,46 @@ def main() -> None:
         num_clusters=np.array(args.num_clusters, dtype=np.int32),
         source_npz_path=np.array(str(args.npz_path)),
         checkpoint_path=np.array(str(args.checkpoint_path)),
+        num_verts=np.array(resolved_num_verts, dtype=np.int32),
+        num_vectors=np.array(resolved_num_vectors, dtype=np.int32),
     )
     print(f"Saved clustering outputs to {assignments_path}")
+
+    ranked_members_by_cluster, ranked_scores_by_cluster = rank_cluster_members(coord_frames, labels, centers)
 
     summary_csv_path = args.output_dir / f"{args.split}_cluster_summary_k{args.num_clusters}.csv"
     save_cluster_summary_csv(summary_csv_path, labels)
     print(f"Saved cluster summary to {summary_csv_path}")
 
+    rankings_csv_path = args.output_dir / f"{args.split}_cluster_rankings_k{args.num_clusters}.csv"
+    save_cluster_rankings_csv(
+        output_path=rankings_csv_path,
+        ranked_members_by_cluster=ranked_members_by_cluster,
+        ranked_scores_by_cluster=ranked_scores_by_cluster,
+        sample_indices=sample_indices,
+    )
+    print(f"Saved cluster rankings to {rankings_csv_path}")
+
     preview_path = args.output_dir / f"{args.split}_cluster_previews_k{args.num_clusters}.png"
     save_cluster_preview_grid(
         images=images,
         pred_joints=pred_joints,
-        labels=labels,
         sample_indices=sample_indices,
+        ranked_members_by_cluster=ranked_members_by_cluster,
+        ranked_scores_by_cluster=ranked_scores_by_cluster,
         output_path=preview_path,
         samples_per_cluster=args.samples_per_cluster,
-        seed=args.seed,
     )
     print(f"Saved cluster previews to {preview_path}")
 
     axes_path = args.output_dir / f"{args.split}_cluster_axes_k{args.num_clusters}.png"
     save_cluster_axes_grid(
         pred_joints=pred_joints,
-        labels=labels,
         sample_indices=sample_indices,
+        ranked_members_by_cluster=ranked_members_by_cluster,
+        ranked_scores_by_cluster=ranked_scores_by_cluster,
         output_path=axes_path,
         samples_per_cluster=args.samples_per_cluster,
-        seed=args.seed,
     )
     print(f"Saved cluster axes visualization to {axes_path}")
 

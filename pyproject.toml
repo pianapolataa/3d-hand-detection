@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hand-detection"
+version = "0.1.0"
+description = "Utilities and training scripts for 3D hand reconstruction from RGB images."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "pillow>=10.0",
+    "scikit-learn>=1.3",
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "tqdm>=4.66",
+]
+
+[tool.setuptools]
+py-modules = []

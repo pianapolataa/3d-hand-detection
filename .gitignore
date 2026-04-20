@@ -2,3 +2,8 @@ FreiHAND_pub_v2/
 data/train_data_778*
 data/train_data_*
 scripts/checkpoints/best_point_model_test.pth
+.venv/
+*.egg-info/
+clustering/outputs/
+*.slurm
+

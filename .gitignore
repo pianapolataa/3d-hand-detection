@@ -5,7 +5,19 @@ scripts/checkpoints/best_point_model_test.pth
 .venv/
 *.egg-info/
 *.slurm
-_pycache__/
 *.log
 *.out
 *.err
+
+# debug outputs
+debug_*.png
+
+# local test images
+eval_images/
+
+# macOS
+.DS_Store
+
+# python cache
+__pycache__/
+*.pyc

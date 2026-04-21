@@ -3,11 +3,14 @@ import torch.nn as nn
 from torchvision import models
 
 class ScaffoldedPointPredictor(nn.Module):
-    def __init__(self, num_joints=21, num_verts=778, num_vectors=15):
+    def __init__(self, num_joints=21, num_verts=778, num_vectors=15, pretrained_backbone=True):
         super(ScaffoldedPointPredictor, self).__init__()
-        
+
         # 1. Shared Backbone: ResNet18 Feature Extraction (512 features)
-        backbone = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # pretrained_backbone=False skips the download when loading from a saved checkpoint,
+        # since load_state_dict() will overwrite these weights anyway.
+        _weights = models.ResNet18_Weights.DEFAULT if pretrained_backbone else None
+        backbone = models.resnet18(weights=_weights)
         # We strip the final FC layer to get raw feature maps
         self.backbone_layers = nn.Sequential(*list(backbone.children())[:-1]) 
         

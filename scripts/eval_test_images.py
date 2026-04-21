@@ -14,6 +14,7 @@ MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
 IMAGE_FOLDER = 'eval_images_converted'
 IMG_SIZE = 224
 NUM_VERTS = 778
+NUM_VECTORS = 15
 
 import mediapipe as mp
 from rembg import remove as rembg_remove
@@ -28,7 +29,7 @@ SKEL_CONNECTIONS = [
 
 # --- 1. LOAD MODEL ---
 print(f"🔄 Loading Super-Fusion model from {MODEL_PATH}...")
-model = ScaffoldedPointPredictor(num_joints=21, num_verts=NUM_VERTS).to(DEVICE)
+model = ScaffoldedPointPredictor(num_joints=21, num_verts=NUM_VERTS, num_vectors=NUM_VECTORS).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 

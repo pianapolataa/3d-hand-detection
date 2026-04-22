@@ -15,10 +15,3 @@ Note: the xyz points are normalized (scaled) and the RGB images are masked. Duri
 
 ## Running the basic model + next TODOs
 Simply go to ```cd scripts/``` and run ```python eval.py```, this script plots predictions for 20 random images in the training dataset. 
-For a given image stream we need to 
-    1. remove the background, and 
-    2. resize the hand to be approx the same size as the dataset images and center it. 
-Here is a repo I saw for masking out the background, but I haven't looked into the details or whether it works for out purposes, feel free to ask AI and etc for best way of masking out background.
-```https://github.com/PeterL1n/BackgroundMattingV2```
-
-The current best model to use in your scripts is ```checkpoints/best_point_model_newest_12560.pth```

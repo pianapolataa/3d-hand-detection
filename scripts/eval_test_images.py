@@ -7,19 +7,19 @@ import cv2
 from PIL import Image
 from torchvision import transforms
 from model import ScaffoldedPointPredictor
+from rembg import remove as rembg_remove
 
 # --- CONFIGURATION ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
-IMAGE_FOLDER = 'eval_images_converted'
+IMAGE_FOLDER = 'eval_images'  # Folder containing test images
 IMG_SIZE = 224
-NUM_VERTS = 778
-NUM_VECTORS = 15
+NUM_JOINTS = 21
+MASK_THRESHOLD = 10
+TARGET_RATIO = 0.88
+BBOX_PAD_RATIO = 0.08
 
-import mediapipe as mp
-from rembg import remove as rembg_remove
-_mp_hands = mp.solutions.hands
-print("✅ Using MediaPipe + rembg for background removal.")
+print("✅ Using rembg + non-black-pixel bounding box (no MediaPipe).")
 
 # Skeletal Connection Mapping (MANO Standard)
 SKEL_CONNECTIONS = [
@@ -29,8 +29,30 @@ SKEL_CONNECTIONS = [
 
 # --- 1. LOAD MODEL ---
 print(f"🔄 Loading Super-Fusion model from {MODEL_PATH}...")
-model = ScaffoldedPointPredictor(num_joints=21, num_verts=NUM_VERTS, num_vectors=NUM_VECTORS).to(DEVICE)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+
+vector_head_bias = checkpoint.get('vector_head.3.bias')
+if vector_head_bias is None:
+    raise KeyError("Missing 'vector_head.3.bias' in checkpoint; cannot infer joint/vector output size.")
+mesh_head_bias = checkpoint.get('mesh_head.5.bias')
+if mesh_head_bias is None:
+    raise KeyError("Missing 'mesh_head.5.bias' in checkpoint; cannot infer vertex output size.")
+
+JOINT_OUTPUT_DIMS = int(vector_head_bias.numel())
+NUM_VECTORS = JOINT_OUTPUT_DIMS // 3
+NUM_VERTS = int(mesh_head_bias.numel() // 3)
+HAS_TRUE_21_JOINTS = (JOINT_OUTPUT_DIMS == NUM_JOINTS * 3)
+NUM_CHECKPOINT_JOINTS = JOINT_OUTPUT_DIMS // 3
+
+print(f"📌 Inferred NUM_VERTS from checkpoint: {NUM_VERTS}")
+print(f"📌 Inferred NUM_VECTORS from checkpoint: {NUM_VECTORS}")
+print(f"📌 Joint branch output dims: {JOINT_OUTPUT_DIMS}")
+print(f"📌 Checkpoint joint/scaffold points: {NUM_CHECKPOINT_JOINTS}")
+if not HAS_TRUE_21_JOINTS:
+    print("⚠️ Checkpoint joint branch is not a 21-joint skeleton. Fallback visualization will show checkpoint scaffold points only.")
+
+model = ScaffoldedPointPredictor(num_joints=NUM_JOINTS, num_verts=NUM_VERTS, num_vectors=NUM_VECTORS).to(DEVICE)
+model.load_state_dict(checkpoint)
 model.eval()
 
 # --- 2. PREPROCESSING PIPELINE ---
@@ -46,40 +68,49 @@ def normalize_lighting(img_bgr):
     lab[:, :, 0] = clahe.apply(lab[:, :, 0])
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
-def crop_hand_bbox(img_bgr):
-    """Use MediaPipe landmarks to crop tightly around the hand, excluding sleeve/arm."""
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    h, w = img_bgr.shape[:2]
-    with _mp_hands.Hands(static_image_mode=True, max_num_hands=1) as hands:
-        results = hands.process(img_rgb)
-    if not results.multi_hand_landmarks:
-        print("  ⚠️  No hand detected by MediaPipe — using full image.")
-        return img_bgr
-    xs = [lm.x for lm in results.multi_hand_landmarks[0].landmark]
-    ys = [lm.y for lm in results.multi_hand_landmarks[0].landmark]
-    pad = 0.08  # fractional padding around landmark bounding box
-    x1 = max(0, int((min(xs) - pad) * w))
-    x2 = min(w, int((max(xs) + pad) * w))
-    y1 = max(0, int((min(ys) - pad) * h))
-    y2 = min(h, int((max(ys) + pad) * h))
-    cropped = img_bgr[y1:y2, x1:x2]
+def crop_hand_bbox(img_rgb, mask, pad_ratio=BBOX_PAD_RATIO):
+    """Crop tightly around the largest non-black foreground region from rembg."""
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        print("  ⚠️  No foreground pixels found after rembg — using full masked image.")
+        return img_rgb
+
+    x1, x2 = xs.min(), xs.max()
+    y1, y2 = ys.min(), ys.max()
+
+    h, w = img_rgb.shape[:2]
+    pad_x = int((x2 - x1 + 1) * pad_ratio)
+    pad_y = int((y2 - y1 + 1) * pad_ratio)
+
+    x1 = max(0, x1 - pad_x)
+    x2 = min(w, x2 + pad_x + 1)
+    y1 = max(0, y1 - pad_y)
+    y2 = min(h, y2 + pad_y + 1)
+
+    cropped = img_rgb[y1:y2, x1:x2]
     if cropped.size == 0:
-        print("  ⚠️  Empty crop — using full image.")
-        return img_bgr
+        print("  ⚠️  Empty crop after bbox — using full masked image.")
+        return img_rgb
     return cropped
 
 def remove_background(img_bgr):
-    """Apply rembg on the already hand-cropped image, composite onto black."""
+    """Apply rembg and return black-background RGB image plus binary foreground mask."""
     _, buf = cv2.imencode('.png', img_bgr)
     output_bytes = rembg_remove(buf.tobytes())
     rgba = Image.open(io.BytesIO(output_bytes)).convert('RGBA')
-    black_bg = Image.new('RGBA', rgba.size, (0, 0, 0, 255))
-    black_bg.paste(rgba, mask=rgba.split()[3])
-    return np.array(black_bg.convert('RGB'))
+
+    rgba_np = np.array(rgba)
+    alpha = rgba_np[:, :, 3]
+    mask = (alpha > 0).astype(np.uint8) * 255
+
+    rgb = rgba_np[:, :, :3]
+    black_bg = np.zeros_like(rgb)
+    black_bg[mask > 0] = rgb[mask > 0]
+    return black_bg, mask
 
 
 # --- Resize and center helper ---
-def resize_and_center(img_rgb, size=224, target_ratio=0.88):
+def resize_and_center(img_rgb, size=224, target_ratio=TARGET_RATIO):
     """Resize while preserving aspect ratio, then paste onto a black square canvas."""
     h, w = img_rgb.shape[:2]
     if h == 0 or w == 0:
@@ -109,11 +140,11 @@ def predict_on_image(img_path, i):
     img_bgr = normalize_lighting(img_bgr)      # 1. even out lighting
     cv2.imwrite(f"debug_light_{i}.png", img_bgr)
 
-    img_bgr = crop_hand_bbox(img_bgr)          # 2. crop to hand only (excludes sleeve)
-    cv2.imwrite(f"debug_crop_{i}.png", img_bgr)
-
-    img_rgb = remove_background(img_bgr)       # 3. rembg on tight crop → black background
+    img_rgb, fg_mask = remove_background(img_bgr)   # 2. rembg first
     cv2.imwrite(f"debug_mask_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
+
+    img_rgb = crop_hand_bbox(img_rgb, fg_mask)      # 3. bbox from non-black / foreground pixels
+    cv2.imwrite(f"debug_crop_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
 
     final_img = resize_and_center(img_rgb, IMG_SIZE)
     cv2.imwrite(f"debug_final_{i}.png", cv2.cvtColor(final_img, cv2.COLOR_RGB2BGR))
@@ -124,11 +155,26 @@ def predict_on_image(img_path, i):
     with torch.inference_mode():
         p_joints, _, p_verts = model(input_tensor)
 
-    pred_j = p_joints.cpu().numpy().reshape(21, 3)
+    joint_values = p_joints.cpu().numpy().reshape(-1)
+    pred_j = None
+    if joint_values.size % 3 == 0 and joint_values.size > 0:
+        pred_j = joint_values.reshape(-1, 3)
     pred_v = p_verts.cpu().numpy().reshape(NUM_VERTS, 3)
 
     display = final_img
     return display, pred_j, pred_v
+
+def set_axes_equal_3d(ax, points):
+    mins = points.min(axis=0)
+    maxs = points.max(axis=0)
+    centers = (mins + maxs) / 2.0
+    radius = np.max(maxs - mins) / 2.0
+    if radius <= 0:
+        radius = 1.0
+
+    ax.set_xlim(centers[0] - radius, centers[0] + radius)
+    ax.set_ylim(centers[1] - radius, centers[1] + radius)
+    ax.set_zlim(centers[2] - radius, centers[2] + radius)
 
 # --- 3. MAIN LOOP ---
 image_files = sorted(
@@ -165,15 +211,20 @@ for i, filename in enumerate(image_files):
     # 1. Plot the Mesh (Red cloud)
     ax2.scatter(p_v[:, 0], p_v[:, 1], p_v[:, 2], s=2, c='red', alpha=0.4, label='Pred Mesh')
     
-    # 2. Plot the Joints (Black crosses)
-    ax2.scatter(p_j[:, 0], p_j[:, 1], p_j[:, 2], s=40, c='black', marker='x', label='Pred Joints')
-    
-    # 3. Draw the Skeleton (Blue lines)
-    for finger in SKEL_CONNECTIONS:
-        ax2.plot(p_j[finger, 0], p_j[finger, 1], p_j[finger, 2], color='blue', linewidth=2)
+    # 2. Plot the checkpoint joint/scaffold outputs
+    if p_j is not None:
+        ax2.scatter(p_j[:, 0], p_j[:, 1], p_j[:, 2], s=40, c='black', marker='x', label='Pred Joints / Scaffold')
 
-    # 4. Formatting
-    ax2.set_title("3D Scaffold Prediction")
+        if p_j.shape[0] == NUM_JOINTS:
+            # 3. Draw the 21-joint skeleton only when the checkpoint really outputs 21 joints
+            for finger in SKEL_CONNECTIONS:
+                ax2.plot(p_j[finger, 0], p_j[finger, 1], p_j[finger, 2], color='blue', linewidth=2)
+            ax2.set_title("3D Mesh + 21-Joint Skeleton")
+        else:
+            ax2.set_title(f"3D Mesh + {p_j.shape[0]} Checkpoint Scaffold Points")
+    else:
+        ax2.set_title("3D Mesh Prediction")
+    set_axes_equal_3d(ax2, p_v)
     ax2.view_init(elev=-90, azim=-90) # Match FreiHAND camera view
     
     ax2.legend(loc='upper right')

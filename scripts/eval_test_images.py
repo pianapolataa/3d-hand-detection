@@ -15,9 +15,18 @@ MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
 IMAGE_FOLDER = 'eval_images'  # Folder containing test images
 IMG_SIZE = 224
 NUM_JOINTS = 21
+
+# Set this manually to match the checkpoint you want to evaluate.
+# Examples: 70, 194, 400, 600, 778
+NUM_VERTS = 778
+
+# Optional: set this manually if you know the checkpoint's scaffold/joint output format.
+# If left as None, it will be inferred from the checkpoint.
+NUM_VECTORS = None
+
 MASK_THRESHOLD = 10
-TARGET_RATIO = 0.88
-BBOX_PAD_RATIO = 0.08
+TARGET_RATIO = 0.75
+BBOX_PAD_RATIO = 0.15
 
 print("✅ Using rembg + non-black-pixel bounding box (no MediaPipe).")
 
@@ -39,14 +48,32 @@ if mesh_head_bias is None:
     raise KeyError("Missing 'mesh_head.5.bias' in checkpoint; cannot infer vertex output size.")
 
 JOINT_OUTPUT_DIMS = int(vector_head_bias.numel())
-NUM_VECTORS = JOINT_OUTPUT_DIMS // 3
-NUM_VERTS = int(mesh_head_bias.numel() // 3)
+NUM_CHECKPOINT_VECTORS = JOINT_OUTPUT_DIMS // 3
+NUM_CHECKPOINT_VERTS = int(mesh_head_bias.numel() // 3)
+
+if NUM_VECTORS is None:
+    NUM_VECTORS = NUM_CHECKPOINT_VECTORS
+
+print(f"📌 Config NUM_VERTS: {NUM_VERTS}")
+print(f"📌 Checkpoint NUM_VERTS: {NUM_CHECKPOINT_VERTS}")
+print(f"📌 Config NUM_VECTORS: {NUM_VECTORS}")
+print(f"📌 Checkpoint NUM_VECTORS: {NUM_CHECKPOINT_VECTORS}")
+print(f"📌 Joint branch output dims: {JOINT_OUTPUT_DIMS}")
+
+if NUM_VERTS != NUM_CHECKPOINT_VERTS:
+    raise ValueError(
+        f"NUM_VERTS mismatch: config says {NUM_VERTS}, but checkpoint outputs {NUM_CHECKPOINT_VERTS}. "
+        f"Please update NUM_VERTS at the top of eval_test_images.py to match the selected model."
+    )
+
+if NUM_VECTORS != NUM_CHECKPOINT_VECTORS:
+    raise ValueError(
+        f"NUM_VECTORS mismatch: config says {NUM_VECTORS}, but checkpoint outputs {NUM_CHECKPOINT_VECTORS}. "
+        f"Please update NUM_VECTORS (or set it to None) to match the selected model."
+    )
+
 HAS_TRUE_21_JOINTS = (JOINT_OUTPUT_DIMS == NUM_JOINTS * 3)
 NUM_CHECKPOINT_JOINTS = JOINT_OUTPUT_DIMS // 3
-
-print(f"📌 Inferred NUM_VERTS from checkpoint: {NUM_VERTS}")
-print(f"📌 Inferred NUM_VECTORS from checkpoint: {NUM_VECTORS}")
-print(f"📌 Joint branch output dims: {JOINT_OUTPUT_DIMS}")
 print(f"📌 Checkpoint joint/scaffold points: {NUM_CHECKPOINT_JOINTS}")
 if not HAS_TRUE_21_JOINTS:
     print("⚠️ Checkpoint joint branch is not a 21-joint skeleton. Fallback visualization will show checkpoint scaffold points only.")
@@ -135,19 +162,19 @@ def predict_on_image(img_path, i):
         return None, None, None
 
     original_img = img_bgr.copy()
-    cv2.imwrite(f"debug_raw_{i}.png", original_img)
+    #cv2.imwrite(f"debug_raw_{i}.png", original_img)
 
     img_bgr = normalize_lighting(img_bgr)      # 1. even out lighting
-    cv2.imwrite(f"debug_light_{i}.png", img_bgr)
+    #cv2.imwrite(f"debug_light_{i}.png", img_bgr)
 
     img_rgb, fg_mask = remove_background(img_bgr)   # 2. rembg first
-    cv2.imwrite(f"debug_mask_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
+    #cv2.imwrite(f"debug_mask_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
 
     img_rgb = crop_hand_bbox(img_rgb, fg_mask)      # 3. bbox from non-black / foreground pixels
-    cv2.imwrite(f"debug_crop_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
+    #cv2.imwrite(f"debug_crop_{i}.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
 
     final_img = resize_and_center(img_rgb, IMG_SIZE)
-    cv2.imwrite(f"debug_final_{i}.png", cv2.cvtColor(final_img, cv2.COLOR_RGB2BGR))
+    #cv2.imwrite(f"debug_final_{i}.png", cv2.cvtColor(final_img, cv2.COLOR_RGB2BGR))
 
     pil_img = Image.fromarray(final_img)
     input_tensor = preprocess(pil_img).unsqueeze(0).to(DEVICE)

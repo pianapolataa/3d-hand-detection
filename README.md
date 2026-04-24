@@ -13,7 +13,7 @@ Then, go to the data directory ```cd data``` and run process_data.py (which will
 
 Note: the xyz points are normalized (scaled) and the RGB images are masked. During pose matching we need to mask our input image as well.
 
-## Running the basic model + next TODOs
+## Running the basic RGB -> hand mesh model
 Go to ```cd scripts/``` and run ```python eval.py```, this script plots predictions for 20 random images in the training dataset. 
 
 ## Running our clustering demos

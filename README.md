@@ -17,7 +17,7 @@ Simply run
 cd scripts/
 python eval.py
 ```
-This script plots predictions for 20 random images in the training dataset. You can drag the 3d plot around to view the points plotted in 3d!
+This script plots predictions for 20 random images in the evaluation dataset, unseen during training. You can drag the 3d plot around to view the points plotted in 3d!
 
 ## Running our clustering demos
 We trained a model that clusters by camera angle / hand orientation, and one that clusters by hand pose.

@@ -25,7 +25,7 @@ class CosineKMeans:
 
     def __init__(
         self,
-        n_clusters: int = 4,
+        n_clusters: int = 5,
         max_iters: int = 100,
         tol: float = 1e-6,
         n_init: int = 5,

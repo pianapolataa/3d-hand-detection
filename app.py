@@ -236,10 +236,10 @@ def load_cluster_artifact(npz_path: str):
         return {key: data[key] for key in data.files}
 
 
-def load_images_from_dataset(npz_path: Path, split: str) -> np.ndarray:
+def load_images_from_dataset(npz_path: Path, split: str, progress_label: str = "Loading dataset images...") -> np.ndarray:
     split_to_key = {"train": "x_train", "val": "x_val", "test": "x_test"}
     member_name = f"{split_to_key[split]}.npy"
-    progress = st.progress(0, text="Loading dataset images...")
+    progress = st.progress(0, text=progress_label)
 
     with zipfile.ZipFile(npz_path) as archive:
         member_info = archive.getinfo(member_name)
@@ -251,7 +251,7 @@ def load_images_from_dataset(npz_path: Path, split: str) -> np.ndarray:
                 if not chunk:
                     break
                 buffer.write(chunk)
-                progress.progress(min(buffer.tell() / total, 1.0), text="Loading dataset images...")
+                progress.progress(min(buffer.tell() / total, 1.0), text=progress_label)
 
     buffer.seek(0)
     images = np.load(buffer, allow_pickle=False)
@@ -259,11 +259,11 @@ def load_images_from_dataset(npz_path: Path, split: str) -> np.ndarray:
     return images
 
 
-def load_images_cached(npz_path: str, split: str) -> np.ndarray:
+def load_images_cached(npz_path: str, split: str, progress_label: str) -> np.ndarray:
     cache_key = f"{npz_path}::{split}"
     image_cache = st.session_state.setdefault("_image_cache", {})
     if cache_key not in image_cache:
-        image_cache[cache_key] = load_images_from_dataset(Path(npz_path), split)
+        image_cache[cache_key] = load_images_from_dataset(Path(npz_path), split, progress_label=progress_label)
     return image_cache[cache_key]
 
 
@@ -281,6 +281,7 @@ def render_cluster_section(
     dataset_path: Path,
     samples_per_cluster: int,
     feature_key: str,
+    guidance_text: str,
     drop_last_two: bool = False,
     preferred_first_cluster: int | None = None,
 ):
@@ -290,7 +291,7 @@ def render_cluster_section(
     features = artifact[feature_key].astype(np.float32)
     split = infer_split_from_name(artifact_path)
 
-    images = load_images_cached(str(dataset_path), split)
+    images = load_images_cached(str(dataset_path), split, progress_label=f"Loading {title.lower()} dataset images...")
     ranked_members, ranked_scores = rank_cluster_members(features, labels, centers)
     cluster_ids = sorted(ranked_members)
     if drop_last_two and len(cluster_ids) > 2:
@@ -300,12 +301,53 @@ def render_cluster_section(
 
     st.subheader(title)
     st.caption(f"{artifact_path.name} • split `{split}` • {len(cluster_ids)} clusters shown")
+    st.info(guidance_text)
+
+    lookup_state_key = f"{title}_lookup_index"
+    if lookup_state_key not in st.session_state:
+        st.session_state[lookup_state_key] = 0
+
+    lookup_col1, lookup_col2 = st.columns([1, 2], gap="medium")
+    with lookup_col1:
+        if st.button("Random dataset index", key=f"{title}_random_lookup", use_container_width=True):
+            st.session_state[lookup_state_key] = int(np.random.randint(0, len(labels)))
+    with lookup_col2:
+        selected_index = st.number_input(
+            "Find cluster for dataset index",
+            min_value=0,
+            max_value=max(len(labels) - 1, 0),
+            value=int(st.session_state[lookup_state_key]),
+            step=1,
+            key=f"{title}_lookup_input",
+        )
+        st.session_state[lookup_state_key] = int(selected_index)
+
+    selected_index = int(st.session_state[lookup_state_key])
+    selected_cluster = int(labels[selected_index])
+    cluster_visible = selected_cluster in cluster_ids
+    lookup_members = ranked_members[selected_cluster]
+    lookup_rank_matches = np.flatnonzero(lookup_members == selected_index)
+    lookup_rank = int(lookup_rank_matches[0] + 1) if len(lookup_rank_matches) > 0 else None
+
+    preview_col1, preview_col2 = st.columns([1, 2], gap="medium")
+    with preview_col1:
+        st.image(images[selected_index], use_container_width=True)
+    with preview_col2:
+        st.markdown(f"**Selected dataset index:** {selected_index}")
+        st.markdown(f"**Cluster:** {selected_cluster}")
+        if lookup_rank is not None:
+            st.markdown(f"**Rank within cluster:** {lookup_rank}")
+        if cluster_visible:
+            st.success(f"Cluster {selected_cluster} is shown below.")
+        else:
+            st.warning(f"Cluster {selected_cluster} is not currently displayed below.")
 
     for cluster_id in cluster_ids:
         members = ranked_members[cluster_id]
         scores = ranked_scores[cluster_id]
         count = min(samples_per_cluster, len(members))
-        st.markdown(f"**Cluster {cluster_id}**  Top {count} representative samples")
+        header_suffix = " ← selected sample belongs here" if cluster_id == selected_cluster and cluster_visible else ""
+        st.markdown(f"**Cluster {cluster_id}**  Top {count} representative samples{header_suffix}")
         cols = st.columns(samples_per_cluster, gap="small")
         for i in range(samples_per_cluster):
             with cols[i]:
@@ -313,7 +355,10 @@ def render_cluster_section(
                     sample_idx = int(members[i])
                     similarity = float(scores[i])
                     st.image(images[sample_idx], use_container_width=True)
-                    st.caption(f"#{i + 1} • sim {similarity:.3f}")
+                    caption = f"#{i + 1} • sim {similarity:.3f}"
+                    if sample_idx == selected_index:
+                        caption += " • selected"
+                    st.caption(caption)
                 else:
                     st.empty()
         st.markdown("")
@@ -367,6 +412,7 @@ def render_cluster_tab(
     title: str,
     default_artifact: Path,
     feature_key: str,
+    guidance_text: str,
     drop_last_two: bool = False,
     preferred_first_cluster: int | None = None,
 ):
@@ -399,13 +445,13 @@ def render_cluster_tab(
         dataset_path=Path(dataset_path),
         samples_per_cluster=samples_per_cluster,
         feature_key=feature_key,
+        guidance_text=guidance_text,
         drop_last_two=drop_last_two,
         preferred_first_cluster=preferred_first_cluster,
     )
 
 
 st.title("3D Hand Detection Demo")
-st.caption("Basic Streamlit dashboard for model predictions and clustering results.")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
@@ -421,14 +467,25 @@ with tab1:
     render_model_eval_tab()
 
 with tab2:
-    render_cluster_tab("Angle Clustering", DEFAULT_ANGLE_CLUSTER, "coord_frames")
+    render_cluster_tab(
+        "Angle Clustering",
+        DEFAULT_ANGLE_CLUSTER,
+        "coord_frames",
+        guidance_text=(
+            "Use the target image below to sanity-check the clustering. The hands in the matching cluster "
+            "should face the same direction as the target image."
+        ),
+    )
 
 with tab3:
     render_cluster_tab(
         "Pose Clustering",
         DEFAULT_POSE_CLUSTER,
         "pose_features",
-        drop_last_two=True,
+        guidance_text=(
+            "Use the target image below to sanity-check the clustering. The hands in the matching cluster "
+            "should have a similar hand pose to the target image."
+        ),
         preferred_first_cluster=4,
     )
 

@@ -52,13 +52,13 @@ Each run creates:
 
 Run from repository root.
 
-### 1) Single run (local)
+### 1) Single training run (local)
 
 ```bash
 python clustering/run_camera_angle_clustering.py
 ```
 
-### 2) Single run with custom settings
+### 2) Single training run with custom settings
 
 ```bash
 python clustering/run_camera_angle_clustering.py \
@@ -80,8 +80,11 @@ python clustering/run_camera_angle_clustering.py \
   --output-dir clustering/outputs/manual_run
 ```
 
-## Practical Notes
+## Evaluation/demo
 
-- The number of vertices and vectors must match both dataset and checkpoint.
-- If not specified, model dimensions are inferred directly from checkpoint weights.
-- Device selection defaults to CUDA when available, otherwise CPU.
+```
+python clustering/angle_clustering_eval.py \
+  --clusters-path clustering/train_clusters_k8.npz \
+  --npz-path data/train_data_600_verts.npz \
+  --samples-per-cluster 5
+```

@@ -312,22 +312,35 @@ def render_cluster_section(
         if st.button("Random dataset index", key=f"{title}_random_lookup", use_container_width=True):
             st.session_state[lookup_state_key] = int(np.random.randint(0, len(labels)))
     with lookup_col2:
-        selected_index = st.number_input(
+        selected_index = st.slider(
             "Find cluster for dataset index",
             min_value=0,
             max_value=max(len(labels) - 1, 0),
             value=int(st.session_state[lookup_state_key]),
-            step=1,
-            key=f"{title}_lookup_input",
+            key=lookup_state_key,
         )
-        st.session_state[lookup_state_key] = int(selected_index)
 
-    selected_index = int(st.session_state[lookup_state_key])
+    selected_index = int(selected_index)
     selected_cluster = int(labels[selected_index])
     cluster_visible = selected_cluster in cluster_ids
     lookup_members = ranked_members[selected_cluster]
     lookup_rank_matches = np.flatnonzero(lookup_members == selected_index)
     lookup_rank = int(lookup_rank_matches[0] + 1) if len(lookup_rank_matches) > 0 else None
+
+    ordered_cluster_ids = list(cluster_ids)
+    if selected_cluster in ordered_cluster_ids:
+        ordered_cluster_ids = [selected_cluster] + [
+            cluster_id for cluster_id in ordered_cluster_ids if cluster_id != selected_cluster
+        ]
+        if preferred_first_cluster is not None and preferred_first_cluster in ordered_cluster_ids[1:]:
+            ordered_cluster_ids = (
+                [ordered_cluster_ids[0], preferred_first_cluster]
+                + [
+                    cluster_id
+                    for cluster_id in ordered_cluster_ids[1:]
+                    if cluster_id != preferred_first_cluster
+                ]
+            )
 
     preview_col1, preview_col2 = st.columns([1, 2], gap="medium")
     with preview_col1:
@@ -342,12 +355,20 @@ def render_cluster_section(
         else:
             st.warning(f"Cluster {selected_cluster} is not currently displayed below.")
 
-    for cluster_id in cluster_ids:
+    for cluster_id in ordered_cluster_ids:
         members = ranked_members[cluster_id]
         scores = ranked_scores[cluster_id]
         count = min(samples_per_cluster, len(members))
         header_suffix = " ← selected sample belongs here" if cluster_id == selected_cluster and cluster_visible else ""
-        st.markdown(f"**Cluster {cluster_id}**  Top {count} representative samples{header_suffix}")
+        if cluster_id == selected_cluster and cluster_visible:
+            st.markdown(
+                f"<div style='padding:0.4rem 0.6rem;border:2px solid #ff4b4b;border-radius:0.5rem;'>"
+                f"<strong>Cluster {cluster_id}</strong>  Top {count} representative samples{header_suffix}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f"**Cluster {cluster_id}**  Top {count} representative samples{header_suffix}")
         cols = st.columns(samples_per_cluster, gap="small")
         for i in range(samples_per_cluster):
             with cols[i]:
@@ -366,14 +387,7 @@ def render_cluster_section(
 
 def render_model_eval_tab():
     st.subheader("Model Prediction Demo")
-    all_npz = _list_npz_files()
-    npz_options = [path for path in all_npz if "eval_data" in path.name]
-    eval_default = DEFAULT_EVAL_NPZ if DEFAULT_EVAL_NPZ in npz_options else (npz_options[0] if npz_options else DEFAULT_EVAL_NPZ)
-
-    checkpoint_path = st.sidebar.text_input("Checkpoint", value=str(DEFAULT_CHECKPOINT))
-    dataset_path = st.sidebar.selectbox("Eval dataset", options=npz_options or [DEFAULT_EVAL_NPZ], index=(npz_options.index(eval_default) if npz_options else 0), format_func=lambda p: str(p.relative_to(REPO_ROOT)))
-
-    dataset = load_eval_dataset(str(dataset_path))
+    dataset = load_eval_dataset(str(DEFAULT_EVAL_NPZ))
     num_samples = len(dataset["images"])
     default_index = int(st.session_state.get("eval_sample_index", 0))
 
@@ -394,7 +408,7 @@ def render_model_eval_tab():
         st.session_state["eval_sample_index"] = sample_index
 
     with st.spinner("Running model inference..."):
-        model, device = load_model(checkpoint_path)
+        model, device = load_model(str(DEFAULT_CHECKPOINT))
         pred_joints, pred_vectors, pred_verts = run_inference(model, device, dataset["images"][sample_index])
 
     gt_joints = dataset["gt_joints"][sample_index].reshape(21, 3)
@@ -410,27 +424,13 @@ def render_model_eval_tab():
 
 def render_cluster_tab(
     title: str,
-    default_artifact: Path,
+    artifact_path: Path,
+    dataset_path: Path,
     feature_key: str,
     guidance_text: str,
     drop_last_two: bool = False,
     preferred_first_cluster: int | None = None,
 ):
-    cluster_files = _list_cluster_files()
-    default_choice = default_artifact if default_artifact in cluster_files else (cluster_files[0] if cluster_files else default_artifact)
-
-    artifact_path = st.sidebar.selectbox(
-        f"{title} artifact",
-        options=cluster_files or [default_artifact],
-        index=(cluster_files.index(default_choice) if cluster_files else 0),
-        format_func=lambda p: str(p.relative_to(REPO_ROOT)),
-        key=f"{title}_artifact",
-    )
-    dataset_path = st.sidebar.text_input(
-        f"{title} dataset",
-        value=str(REPO_ROOT / "data" / "train_data_600_verts.npz"),
-        key=f"{title}_dataset",
-    )
     samples_per_cluster = st.sidebar.slider(
         f"{title} samples/cluster",
         min_value=1,
@@ -441,8 +441,8 @@ def render_cluster_tab(
 
     render_cluster_section(
         title=title,
-        artifact_path=Path(artifact_path),
-        dataset_path=Path(dataset_path),
+        artifact_path=artifact_path,
+        dataset_path=dataset_path,
         samples_per_cluster=samples_per_cluster,
         feature_key=feature_key,
         guidance_text=guidance_text,
@@ -470,6 +470,7 @@ with tab2:
     render_cluster_tab(
         "Angle Clustering",
         DEFAULT_ANGLE_CLUSTER,
+        REPO_ROOT / "data" / "train_data_600_verts.npz",
         "coord_frames",
         guidance_text=(
             "Use the target image below to sanity-check the clustering. The hands in the matching cluster "
@@ -481,6 +482,7 @@ with tab3:
     render_cluster_tab(
         "Pose Clustering",
         DEFAULT_POSE_CLUSTER,
+        REPO_ROOT / "data" / "train_data_600_verts.npz",
         "pose_features",
         guidance_text=(
             "Use the target image below to sanity-check the clustering. The hands in the matching cluster "

@@ -27,7 +27,7 @@ We trained a model that clusters by camera angle / hand orientation, and one tha
 For visualization of the accuracy of our hand orientation clustering model, simply run
 ```
 python clustering/angle_clustering_eval.py \
-  --clusters-path clustering/train_clusters_k8.npz \
+  --clusters-path clustering/train_camera_clusters_k8.npz \
   --npz-path data/train_data_600_verts.npz \
   --samples-per-cluster 5
 ```

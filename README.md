@@ -12,6 +12,14 @@ Unzip the file and move the folder FreiHAND_pub_v2 to the root directory, so you
 Then, go to the data directory ```cd data``` and run process_data.py (which will take a bit). 
 
 ## Running the basic RGB -> hand mesh model
+Run our Streamlit website using
+```
+streamlit run app.py
+```
+
+# The following instructions are for running our eval scripts locally
+
+## Running the basic RGB -> hand mesh model
 Simply run 
 ```
 cd scripts/

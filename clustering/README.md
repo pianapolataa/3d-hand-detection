@@ -81,10 +81,20 @@ python clustering/run_camera_angle_clustering.py \
 ```
 
 ## Evaluation/demo
-
+To visualize clustering by the hand orientation/camera angle, run
 ```
 python clustering/angle_clustering_eval.py \
   --clusters-path clustering/train_clusters_k8.npz \
   --npz-path data/train_data_600_verts.npz \
   --samples-per-cluster 5
+```
+
+To visualize clustering by the hand poses, run
+
+```
+python clustering/pose_clustering_eval.py \
+  --clusters-path clustering/train_pose_clusters_k10.npz \
+  --npz-path data/train_data_600_verts.npz \
+  --samples-per-cluster 6
+
 ```

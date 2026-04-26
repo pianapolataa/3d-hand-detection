@@ -1,1 +1,0 @@
-# reach goal: object collision

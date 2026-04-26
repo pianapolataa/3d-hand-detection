@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
-NPZ_PATH = 'train_data_70_verts.npz'
+NPZ_PATH = 'train_data_600_verts.npz'
 
 
 def verify_saved_data():

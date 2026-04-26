@@ -22,7 +22,7 @@ NUM_JOINTS = 21
 DEFAULT_NUM_VERTS = 600
 DEFAULT_NUM_VECTORS = 15
 DEFAULT_BATCH_SIZE = 64
-DEFAULT_NUM_CLUSTERS = 4
+DEFAULT_NUM_CLUSTERS = 10
 DEFAULT_RANDOM_SEED = 42
 
 WRIST_ID = 0
@@ -181,3 +181,43 @@ def compute_hand_frame_components(pred_joints: np.ndarray) -> Tuple[np.ndarray, 
     palm_normal = safe_normalize(palm_normal)
     middle_axis = safe_normalize(middle_mcp)
     return palm_normal.astype(np.float32), middle_axis.astype(np.float32)
+
+def compute_hand_frame_axes(pred_joints):
+    wrist = pred_joints[:, WRIST_ID, :]
+    index_mcp = pred_joints[:, INDEX_MCP_ID, :] - wrist
+    pinky_mcp = pred_joints[:, PINKY_MCP_ID, :] - wrist
+    middle_mcp = pred_joints[:, MIDDLE_MCP_ID, :] - wrist
+
+    v1 = safe_normalize(np.cross(index_mcp, pinky_mcp))
+
+    middle_proj = np.sum(middle_mcp * v1, axis=1, keepdims=True) * v1
+    v2 = safe_normalize(middle_mcp - middle_proj)
+
+    v3 = safe_normalize(np.cross(v1, v2))
+
+    return v1.astype(np.float32), v2.astype(np.float32), v3.astype(np.float32)
+
+def transform_vectors_to_hand_frame(
+    pred_vectors: np.ndarray,
+    v1: np.ndarray,
+    v2: np.ndarray,
+    v3: np.ndarray,
+) -> np.ndarray:
+    x = np.sum(pred_vectors * v1[:, None, :], axis=2)
+    y = np.sum(pred_vectors * v2[:, None, :], axis=2)
+    z = np.sum(pred_vectors * v3[:, None, :], axis=2)
+    transformed = np.stack([x, y, z], axis=2)
+    return transformed.astype(np.float32)
+
+def compute_pose_features(pred_joints: np.ndarray, pred_vectors: np.ndarray) -> np.ndarray:
+    v1, v2, v3 = compute_hand_frame_axes(pred_joints)
+    transformed = transform_vectors_to_hand_frame(pred_vectors, v1, v2, v3)
+
+    wrist = pred_joints[:, WRIST_ID, :]
+    index_mcp = pred_joints[:, INDEX_MCP_ID, :] - wrist
+    scale = np.linalg.norm(index_mcp, axis=1)
+    scale = np.clip(scale, 1e-8, None)
+
+    transformed = transformed / scale[:, None, None]
+    features = transformed.reshape(transformed.shape[0], -1).astype(np.float32)
+    return features

@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 
-DATA_DIR = "../FreiHAND_pub_v2"
+DATA_DIR = "FreiHAND_pub_v2"
 NUM_SAMPLES = 32560
 VAL_SIZE = 0.1
 EVAL_SAMPLES = 100
@@ -29,8 +29,8 @@ def parse_args():
 
 def preprocess_data(args):
     target_verts = args.target_verts
-    out_file = f"./train_data_{target_verts}_verts.npz"
-    eval_file = f"./eval_data_{target_verts}_verts.npz"
+    out_file = f"data/train_data_{target_verts}_verts.npz"
+    eval_file = f"data/eval_data_{target_verts}_verts.npz"
 
     print(f"🚀 Starting Preprocessing | Target Verts: {target_verts} | Eval Samples: {args.eval_samples}")
 

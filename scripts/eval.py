@@ -7,8 +7,8 @@ from PIL import Image
 
 # 1. Setup & Device
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-NPZ_PATH = '../data/eval_data_600_verts.npz' 
-MODEL_PATH = 'checkpoints/model_600_verts_15_vectors.pth'
+NPZ_PATH = 'data/eval_data_600_verts.npz' 
+MODEL_PATH = 'scripts/checkpoints/model_600_verts_15_vectors.pth'
 NUM_VERTS = 600  
 NUM_VECTORS = 15
 

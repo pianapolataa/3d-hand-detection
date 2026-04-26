@@ -45,6 +45,11 @@ Launch the website with:
 ```bash
 streamlit run app.py
 ```
+Note: If you get a circular dependency error with pandas, run
+```
+python -m pip uninstall -y pandas
+python -m pip install -e .
+```
 
 The app currently includes:
 

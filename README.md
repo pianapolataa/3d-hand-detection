@@ -1,68 +1,146 @@
 # 3d-hand-detection
-This project addresses the challenge of reconstructing an accurate 3D hand representation from an RGB image, transitioning from skeleton-based 21-point tracking to dense surface point cloud modeling.
 
-## Quick demo (graders)
+This project explores 3D hand detection from RGB images, including:
 
-Single-script webcam demo that classifies your hand as one of
-`FIST / OPEN_PALM / PEACE / THUMBS_UP / POINT`. Uses MediaPipe for
-landmarks and a rotation-invariant hand-frame embedding — no trained
-model required.
+- dense 3D hand point cloud reconstruction from a single image
+- camera-angle clustering
+- hand-pose clustering
+- knn hand pose retrieval from a live webcam using MediaPipe
 
+## Installation
+
+From the repo root:
+
+```bash
+python -m pip install -e .
 ```
-pip install -e .
-python demo/demo.py
+
+This installs the dependencies used across the repo.
+
+## Dataset Setup
+
+Download FreiHAND Dataset v2 from:
+
+`https://lmb.informatik.uni-freiburg.de/resources/datasets/FreihandDataset.en.html`
+
+After unzipping, place `FreiHAND_pub_v2` at the repo root:
+
+```text
+3d-hand-detection/
+  FreiHAND_pub_v2/
 ```
 
-On first launch the script walks you through a short calibration
-(~15 seconds total): hold each pose and slowly rotate/tilt your hand
-so the template is averaged over several viewpoints. Subsequent runs
-skip straight to live matching.
+Then preprocess the data:
 
-Controls: `Q` quit, `R` recalibrate. Re-run with `--collect` to force
-recalibration.
-
-## Download Dataset
-Scroll to the bottom of this website and download FreiHAND Dataset v2 (3.7GB)
-
-```https://lmb.informatik.uni-freiburg.de/resources/datasets/FreihandDataset.en.html```
-
-Unzip the file and move the folder FreiHAND_pub_v2 to the root directory, so your repo looks like 3d-hand-detection/FreiHAND_pub_v2
-
-Then, go to the data directory ```cd data``` and run process_data.py (which will take a bit). 
-
-## Running the basic RGB -> hand mesh model
-Run our Streamlit website using
+```bash
+python data/process_data.py
 ```
+
+That produces the processed `.npz` files used by the training/eval/clustering scripts.
+
+## Main Streamlit Demo
+
+Launch the website with:
+
+```bash
 streamlit run app.py
 ```
 
-# The following instructions are for running our eval scripts locally
+The app currently includes:
 
-## Running the basic RGB -> hand mesh model
-Simply run 
-```
-cd scripts/
-python eval.py
-```
-This script plots predictions for 20 random images in the evaluation dataset, unseen during training. You can drag the 3d plot around to view the points plotted in 3d!
+- model prediction demo
+- camera-angle clustering demo
+- hand-pose clustering demo
+- live knn hand-pose retrieval webcam demo
 
-## Running our clustering demos
-We trained a model that clusters by camera angle / hand orientation, and one that clusters by hand pose.
+## Webcam Hand Pose Detection Demo
 
-For visualization of our clustering by hand orientation/camera angle model, simply run
+For the standalone OpenCV demo of our knn hand pose detection:
+
+```bash
+python demo/demo.py
 ```
+
+We provide a predefined list of hand poses for the following poses, and the script automatically retrieves the closest of these poses to the camera input:
+
+- `FIST`
+- `OPEN_PALM`
+- `PEACE`
+- `THUMBS_UP`
+- `POINT`
+
+You can force recalibration with:
+
+```bash
+python demo/demo.py --collect
+```
+
+Controls:
+
+- `Q` quit
+- `R` recalibrate
+
+## Model Evaluation
+
+To run the original local eval script of our RGB -> point cloud detection model:
+
+```bash
+python scripts/eval.py
+```
+Which was trained using the script
+```
+python scripts/train.py
+```
+
+## Clustering Demos
+
+### Camera-angle clustering
+
+```bash
 python clustering/angle_clustering_eval.py \
   --clusters-path clustering/train_camera_clusters_k8.npz \
   --npz-path data/train_data_600_verts.npz \
   --samples-per-cluster 5
 ```
-You should see that the hands in each cluster are facing the same direction, even though the hand positions are different.
 
-For visualization of our clustering by hand pose model, run
-```
+Expected behavior:
+hands in each cluster should generally face the same direction, even when the exact hand pose differs.
+
+### Hand-pose clustering
+
+```bash
 python clustering/pose_clustering_eval.py \
   --clusters-path clustering/train_pose_clusters_k10.npz \
   --npz-path data/train_data_600_verts.npz \
   --samples-per-cluster 6
 ```
-You should see that the hands in each cluster are moved to the same pose (ex pinch in cluster 4, even though the orientations are different).
+
+Expected behavior:
+hands in each cluster should generally share a similar pose, even when the camera orientation differs.
+
+## kNN Retrieval Scripts
+
+Build the retrieval index:
+
+```bash
+python knn/build_index.py
+```
+
+Offline retrieval:
+
+```bash
+python knn/retrieve.py
+```
+
+Live retrieval:
+
+```bash
+python knn/live_demo.py
+```
+
+## Notes
+
+- `scripts/checkpoints/model_600_verts_15_vectors.pth` is the RGB -> point cloud model we trained and used in plotting and clustering demos.
+- `demo/hand_landmarker.task` is required for the MediaPipe webcam demos.
+- `demo/reference_poses.npz` is used by the live hand-pose matcher after calibration.
+- `data/retrieval_index_600_verts.npz` is used by the kNN retrieval demo.

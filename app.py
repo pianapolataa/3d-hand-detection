@@ -5,12 +5,15 @@ import sys
 import zipfile
 from pathlib import Path
 
+import av
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
+from streamlit_webrtc import WebRtcMode, webrtc_streamer
 from torchvision import transforms
 
 
@@ -27,6 +30,9 @@ DEFAULT_EVAL_NPZ = REPO_ROOT / "data" / "eval_data_600_verts.npz"
 DEFAULT_CHECKPOINT = REPO_ROOT / "scripts" / "checkpoints" / "model_600_verts_15_vectors.pth"
 DEFAULT_ANGLE_CLUSTER = REPO_ROOT / "clustering" / "train_camera_clusters_k8.npz"
 DEFAULT_POSE_CLUSTER = REPO_ROOT / "clustering" / "train_pose_clusters_k10.npz"
+DEFAULT_RETRIEVAL_INDEX = REPO_ROOT / "data" / "retrieval_index_600_verts.npz"
+DEFAULT_LANDMARKER_PATH = REPO_ROOT / "demo" / "hand_landmarker.task"
+DEFAULT_REFERENCE_POSES = REPO_ROOT / "demo" / "reference_poses.npz"
 
 SKEL_CONNECTIONS = [
     [0, 1, 2, 3, 4],
@@ -35,6 +41,29 @@ SKEL_CONNECTIONS = [
     [0, 13, 14, 15, 16],
     [0, 17, 18, 19, 20],
 ]
+
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (0, 17), (13, 17), (17, 18), (18, 19), (19, 20),
+]
+
+CLOUD_SIZE = 180
+MATCH_THRESHOLD = 0.92
+WRIST = 0
+INDEX_MCP = 5
+MIDDLE_MCP = 9
+PINKY_MCP = 17
+FINGERTIPS = [4, 8, 12, 16, 20]
+POSE_HINTS = {
+    "FIST": "all fingers curled into a fist",
+    "OPEN_PALM": "all five fingers fully extended",
+    "PEACE": "index + middle up, others curled",
+    "THUMBS_UP": "thumb extended up, other fingers curled",
+    "POINT": "index finger extended, others curled",
+}
 
 
 def _list_npz_files() -> list[Path]:
@@ -49,6 +78,11 @@ def _coerce_scalar(value):
     if isinstance(value, np.ndarray) and value.shape == ():
         return value.item()
     return value
+
+
+def _safe_normalize(vectors: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
+    return vectors / np.clip(norms, eps, None)
 
 
 @st.cache_resource(show_spinner=False)
@@ -212,6 +246,243 @@ def render_interactive_eval_plot(
 def safe_normalize(vectors: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
     return vectors / np.clip(norms, eps, None)
+
+
+@st.cache_data(show_spinner=False)
+def load_retrieval_index(index_path: str):
+    with np.load(index_path, allow_pickle=False) as data:
+        return {
+            "images": data["images"],
+            "embeddings": data["embeddings"].astype(np.float32),
+            "gt_joints": data["gt_joints"].astype(np.float32),
+            "gt_verts": data["gt_verts"].astype(np.float32),
+        }
+
+
+@st.cache_resource(show_spinner=False)
+def load_hand_landmarker(model_path: str):
+    import mediapipe as mp
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+
+    options = mp_vision.HandLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=model_path),
+        num_hands=1,
+        min_hand_detection_confidence=0.6,
+        min_hand_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+        running_mode=mp_vision.RunningMode.IMAGE,
+    )
+    return mp_vision.HandLandmarker.create_from_options(options)
+
+
+@st.cache_data(show_spinner=False)
+def load_reference_poses(reference_path: str):
+    with np.load(reference_path, allow_pickle=False) as data:
+        return list(data["names"]), data["embeddings"].astype(np.float32)
+
+
+def detect_hand_landmarks(image_rgb: np.ndarray):
+    import mediapipe as mp
+
+    landmarker = load_hand_landmarker(str(DEFAULT_LANDMARKER_PATH))
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+    detection = landmarker.detect(mp_image)
+    if not detection.hand_landmarks:
+        return None, None
+    landmarks = detection.hand_landmarks[0]
+    joints = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)
+    return landmarks, joints
+
+
+def landmarks_to_embedding(landmarks) -> np.ndarray | None:
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)
+    pts -= pts[0]
+    vec = pts.flatten()
+    norm = np.linalg.norm(vec)
+    if norm < 1e-8:
+        return None
+    return vec / norm
+
+
+def hand_frame_axes(joints: np.ndarray):
+    wrist = joints[WRIST]
+    index_mcp = joints[INDEX_MCP] - wrist
+    pinky_mcp = joints[PINKY_MCP] - wrist
+    middle_mcp = joints[MIDDLE_MCP] - wrist
+
+    v1 = _safe_normalize(np.cross(index_mcp, pinky_mcp))
+    v2 = _safe_normalize(middle_mcp - np.dot(middle_mcp, v1) * v1)
+    v3 = _safe_normalize(np.cross(v1, v2))
+    return v1.astype(np.float32), v2.astype(np.float32), v3.astype(np.float32)
+
+
+def to_hand_frame(joints: np.ndarray):
+    centered = joints - joints[WRIST]
+    v1, v2, v3 = hand_frame_axes(joints)
+    rotation = np.stack([v1, v2, v3], axis=0)
+    return (centered @ rotation.T).astype(np.float32)
+
+
+def fingertip_embedding(joints: np.ndarray) -> np.ndarray | None:
+    hand_frame = to_hand_frame(joints)
+    tips = hand_frame[FINGERTIPS]
+    dists = np.linalg.norm(tips, axis=1)
+    feat = np.concatenate([tips.reshape(-1), dists])
+    norm = np.linalg.norm(feat)
+    if norm < 1e-6:
+        return None
+    return (feat / norm).astype(np.float32)
+
+
+def match_pose(query_emb: np.ndarray, ref_names: list[str], ref_embs: np.ndarray):
+    sims = ref_embs @ query_emb
+    best = int(np.argmax(sims))
+    return ref_names[best], float(sims[best])
+
+
+def draw_skeleton(frame_bgr: np.ndarray, joints: np.ndarray):
+    height, width = frame_bgr.shape[:2]
+    points = [(int(j[0] * width), int(j[1] * height)) for j in joints]
+    for a, b in HAND_CONNECTIONS:
+        cv2.line(frame_bgr, points[a], points[b], (0, 220, 0), 2, cv2.LINE_AA)
+    for point in points:
+        cv2.circle(frame_bgr, point, 4, (0, 255, 255), -1, cv2.LINE_AA)
+
+
+def put_text(
+    image: np.ndarray,
+    text: str,
+    origin: tuple[int, int],
+    scale: float = 0.8,
+    color: tuple[int, int, int] = (255, 255, 255),
+    thickness: int = 2,
+):
+    cv2.putText(
+        image,
+        text,
+        origin,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        (0, 0, 0),
+        thickness + 2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        image,
+        text,
+        origin,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        color,
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+class PoseMatchProcessor:
+    def __init__(self):
+        self.landmarker = load_hand_landmarker(str(DEFAULT_LANDMARKER_PATH))
+        self.ref_names, self.ref_embs = load_reference_poses(str(DEFAULT_REFERENCE_POSES))
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        image = frame.to_ndarray(format="bgr24")
+        image = cv2.flip(image, 1)
+
+        frame_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        landmarks, joints = detect_hand_landmarks(frame_rgb)
+
+        if joints is None:
+            put_text(image, "No hand detected", (30, 50), scale=0.9, color=(0, 220, 220))
+        else:
+            draw_skeleton(image, joints)
+            emb = fingertip_embedding(joints)
+            if emb is not None:
+                name, sim = match_pose(emb, self.ref_names, self.ref_embs)
+                if sim >= MATCH_THRESHOLD:
+                    label, color = name, (80, 220, 80)
+                else:
+                    label, color = "(no confident match)", (80, 200, 220)
+                put_text(image, label, (30, 60), scale=1.4, color=color, thickness=3)
+                put_text(image, f"sim = {sim:.3f}", (30, 110), scale=0.8, color=(255, 255, 255))
+
+        put_text(image, "Live hand pose demo", (30, image.shape[0] - 50), scale=0.7, color=(180, 180, 180))
+        put_text(image, "Move your hand to match a reference pose", (30, image.shape[0] - 20), scale=0.6, color=(180, 180, 180))
+        return av.VideoFrame.from_ndarray(image, format="bgr24")
+
+
+def cosine_search(query_emb: np.ndarray, embeddings: np.ndarray, k: int):
+    sims = embeddings @ query_emb
+    top_k = np.argsort(sims)[::-1][:k]
+    return top_k, sims[top_k]
+
+
+def draw_hand_overlay(image_rgb: np.ndarray, landmarks) -> Image.Image:
+    image = Image.fromarray(image_rgb.copy())
+    draw = ImageDraw.Draw(image)
+    width, height = image.size
+    points = [(int(lm.x * width), int(lm.y * height)) for lm in landmarks]
+
+    for a, b in HAND_CONNECTIONS:
+        draw.line([points[a], points[b]], fill=(0, 220, 0), width=3)
+    for x, y in points:
+        r = 4
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 220, 0), outline=(0, 160, 0))
+
+    return image
+
+
+def render_cloud_2d(verts: np.ndarray, joints: np.ndarray, size: int = CLOUD_SIZE) -> np.ndarray:
+    img = np.zeros((size, size, 3), dtype=np.uint8)
+    pts2d = np.vstack([verts[:, :2], joints[:, :2]])
+    mins, maxs = pts2d.min(axis=0), pts2d.max(axis=0)
+    span = (maxs - mins).max()
+    if span < 1e-6:
+        return img
+
+    scale = (size * 0.82) / span
+    center = (mins + maxs) / 2.0
+
+    def to_px(points: np.ndarray):
+        px = ((points[:, :2] - center) * scale + size / 2).astype(int)
+        px[:, 1] = size - 1 - px[:, 1]
+        return px
+
+    verts_px = to_px(verts)
+    joints_px = to_px(joints)
+
+    for px in verts_px:
+        if 0 <= px[0] < size and 0 <= px[1] < size:
+            cv2.circle(img, (int(px[0]), int(px[1])), 2, (237, 149, 100), -1)
+
+    for finger in SKEL_CONNECTIONS:
+        for idx in range(len(finger) - 1):
+            cv2.line(
+                img,
+                tuple(joints_px[finger[idx]]),
+                tuple(joints_px[finger[idx + 1]]),
+                (80, 80, 220),
+                1,
+                cv2.LINE_AA,
+            )
+
+    for px in joints_px:
+        if 0 <= px[0] < size and 0 <= px[1] < size:
+            cv2.circle(img, (int(px[0]), int(px[1])), 3, (0, 165, 255), -1)
+
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+
+@st.cache_data(show_spinner=False)
+def prerender_clouds(index_path: str):
+    index = load_retrieval_index(index_path)
+    return np.stack(
+        [
+            render_cloud_2d(index["gt_verts"][i].reshape(-1, 3), index["gt_joints"][i].reshape(21, 3))
+            for i in range(len(index["images"]))
+        ],
+        axis=0,
+    )
 
 
 def rank_cluster_members(features: np.ndarray, labels: np.ndarray, centers: np.ndarray):
@@ -451,6 +722,26 @@ def render_cluster_tab(
     )
 
 
+def render_live_pose_demo_tab():
+    st.subheader("Live Hand Pose Demo")
+    st.info(
+        "This is the Streamlit version of `demo/demo.py`. It runs a live webcam stream, detects a single hand "
+        "with MediaPipe, builds the same hand-frame fingertip embedding, and overlays the best matching pose label."
+    )
+    ref_names, _ = load_reference_poses(str(DEFAULT_REFERENCE_POSES))
+    st.caption(f"Loaded reference poses: {', '.join(ref_names)}")
+    st.caption("Allow camera access in your browser, then press Start.")
+
+    webrtc_streamer(
+        key="live-pose-demo",
+        mode=WebRtcMode.SENDRECV,
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=PoseMatchProcessor,
+        async_processing=True,
+    )
+
+
 st.title("3D Hand Detection Demo")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -458,7 +749,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
         "Model Eval",
         "Angle Clustering",
         "Pose Clustering",
-        "Future Demo 1",
+        "Live Pose Demo",
         "Future Demo 2",
     ]
 )
@@ -492,7 +783,7 @@ with tab3:
     )
 
 with tab4:
-    st.info("Reserved for the next demo module.")
+    render_live_pose_demo_tab()
 
 with tab5:
     st.info("Reserved for another upcoming demo module.")

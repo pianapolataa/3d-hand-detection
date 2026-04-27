@@ -11,14 +11,14 @@ from rembg import remove as rembg_remove
 
 # --- CONFIGURATION ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
+MODEL_PATH = 'scripts/checkpoints/model_600_verts_15_vectors.pth'
 IMAGE_FOLDER = 'eval_images'  # Folder containing test images
 IMG_SIZE = 224
 NUM_JOINTS = 21
 
 # Set this manually to match the checkpoint you want to evaluate.
 # Examples: 70, 194, 400, 600, 778
-NUM_VERTS = 778
+NUM_VERTS = 600
 
 # Optional: set this manually if you know the checkpoint's scaffold/joint output format.
 # If left as None, it will be inferred from the checkpoint.

@@ -58,6 +58,33 @@ The app currently includes:
 - hand-pose clustering demo
 - live knn hand-pose retrieval webcam demo
 
+## Webcam Hand Pose Detection Demo
+
+For the standalone OpenCV demo of our knn hand pose detection:
+
+```bash
+python knn/demo.py
+```
+
+We provide a predefined list of hand poses for the following poses, and the script automatically retrieves the closest of these poses to the camera input:
+
+- `FIST`
+- `OPEN_PALM`
+- `PEACE`
+- `THUMBS_UP`
+- `POINT`
+
+You can force recalibration with:
+
+```bash
+python knn/demo.py --collect
+```
+
+Controls:
+
+- `Q` quit
+- `R` recalibrate
+
 ## Model Evaluation
 
 To run the original local eval script of our RGB -> point cloud detection model:
@@ -132,6 +159,6 @@ python knn/build_index.py
 ## Notes
 
 - `scripts/checkpoints/model_600_verts_15_vectors.pth` is the RGB -> point cloud model we trained and used in plotting and clustering demos.
-- `demo/hand_landmarker.task` is required for the MediaPipe webcam demos.
-- `demo/reference_poses.npz` is used by the live hand-pose matcher after calibration.
+- `knn/hand_landmarker.task` is required for the MediaPipe webcam demos.
+- `knn/reference_poses.npz` is used by the live hand-pose matcher after calibration.
 - `data/retrieval_index_600_verts.npz` is used by the kNN retrieval demo.

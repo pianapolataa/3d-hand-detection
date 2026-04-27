@@ -31,8 +31,8 @@ DEFAULT_CHECKPOINT = REPO_ROOT / "scripts" / "checkpoints" / "model_600_verts_15
 DEFAULT_ANGLE_CLUSTER = REPO_ROOT / "clustering" / "train_camera_clusters_k8.npz"
 DEFAULT_POSE_CLUSTER = REPO_ROOT / "clustering" / "train_pose_clusters_k10.npz"
 DEFAULT_RETRIEVAL_INDEX = REPO_ROOT / "data" / "retrieval_index_600_verts.npz"
-DEFAULT_LANDMARKER_PATH = REPO_ROOT / "demo" / "hand_landmarker.task"
-DEFAULT_REFERENCE_POSES = REPO_ROOT / "demo" / "reference_poses.npz"
+DEFAULT_LANDMARKER_PATH = REPO_ROOT / "knn" / "hand_landmarker.task"
+DEFAULT_REFERENCE_POSES = REPO_ROOT / "knn" / "reference_poses.npz"
 
 SKEL_CONNECTIONS = [
     [0, 1, 2, 3, 4],
@@ -725,7 +725,7 @@ def render_cluster_tab(
 def render_live_pose_demo_tab():
     st.subheader("Live Hand Pose Demo")
     st.info(
-        "This is the Streamlit version of `demo/demo.py`. It runs a live webcam stream, detects a single hand "
+        "This is the Streamlit version of `knn/demo.py`. It runs a live webcam stream, detects a single hand "
         "with MediaPipe, builds the same hand-frame fingertip embedding, and overlays the best matching pose label."
     )
     ref_names, _ = load_reference_poses(str(DEFAULT_REFERENCE_POSES))

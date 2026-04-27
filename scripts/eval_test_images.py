@@ -1,5 +1,6 @@
 import os
 import io
+from pathlib import Path
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,14 +12,16 @@ from rembg import remove as rembg_remove
 
 # --- CONFIGURATION ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_PATH = 'checkpoints/best_point_model_newest_12560.pth'
-IMAGE_FOLDER = 'eval_images'  # Folder containing test images
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+MODEL_PATH = SCRIPT_DIR / "checkpoints" / "model_600_verts_15_vectors.pth"
+IMAGE_FOLDER = SCRIPT_DIR / "eval_images"  # Folder containing test images
 IMG_SIZE = 224
 NUM_JOINTS = 21
 
 # Set this manually to match the checkpoint you want to evaluate.
 # Examples: 70, 194, 400, 600, 778
-NUM_VERTS = 778
+NUM_VERTS = 600
 
 # Optional: set this manually if you know the checkpoint's scaffold/joint output format.
 # If left as None, it will be inferred from the checkpoint.
@@ -38,6 +41,12 @@ SKEL_CONNECTIONS = [
 
 # --- 1. LOAD MODEL ---
 print(f"🔄 Loading Super-Fusion model from {MODEL_PATH}...")
+if not MODEL_PATH.exists():
+    raise FileNotFoundError(
+        f"Checkpoint not found: {MODEL_PATH}\n"
+        "Expected checkpoint path is scripts/checkpoints/model_600_verts_15_vectors.pth. "
+        "Update MODEL_PATH if your checkpoint has a different name."
+    )
 checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
 
 vector_head_bias = checkpoint.get('vector_head.3.bias')
@@ -204,57 +213,56 @@ def set_axes_equal_3d(ax, points):
     ax.set_zlim(centers[2] - radius, centers[2] + radius)
 
 # --- 3. MAIN LOOP ---
-image_files = sorted(
-    [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-)
+def run_eval_folder():
+    image_files = sorted(
+        [f for f in os.listdir(IMAGE_FOLDER) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    )
 
-if not image_files:
-    print(f"❌ No images found in '{IMAGE_FOLDER}' folder.")
-else:
+    if not image_files:
+        print(f"❌ No images found in '{IMAGE_FOLDER}' folder.")
+        return
+
     print(f"🖼️ Found {len(image_files)} images. Starting inference...")
 
-for i, filename in enumerate(image_files):
-    img_path = os.path.join(IMAGE_FOLDER, filename)
-    print(f"🔍 Processing: {filename}")
-    
-    result = predict_on_image(img_path, i)
-    if result[0] is None:
-        continue
-    img_display, p_j, p_v = result
-    # img_display, p_j, p_v = predict_on_image(img_path, i)
-    
-    fig = plt.figure(figsize=(15, 7))
-    fig.suptitle(f"Inference: {filename}", fontsize=14)
-    
-    # Left: Original Image
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax1.imshow(img_display)
-    ax1.set_title("Input (Resized)")
-    ax1.axis('off')
-    
-    # Right: 3D Reconstruction
-    ax2 = fig.add_subplot(1, 2, 2, projection='3d')
-    
-    # 1. Plot the Mesh (Red cloud)
-    ax2.scatter(p_v[:, 0], p_v[:, 1], p_v[:, 2], s=2, c='red', alpha=0.4, label='Pred Mesh')
-    
-    # 2. Plot the checkpoint joint/scaffold outputs
-    if p_j is not None:
-        ax2.scatter(p_j[:, 0], p_j[:, 1], p_j[:, 2], s=40, c='black', marker='x', label='Pred Joints / Scaffold')
+    for i, filename in enumerate(image_files):
+        img_path = IMAGE_FOLDER / filename
+        print(f"🔍 Processing: {filename}")
+        
+        result = predict_on_image(str(img_path), i)
+        if result[0] is None:
+            continue
+        img_display, p_j, p_v = result
+        
+        fig = plt.figure(figsize=(15, 7))
+        fig.suptitle(f"Inference: {filename}", fontsize=14)
+        
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax1.imshow(img_display)
+        ax1.set_title("Input (Resized)")
+        ax1.axis('off')
+        
+        ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+        ax2.scatter(p_v[:, 0], p_v[:, 1], p_v[:, 2], s=2, c='red', alpha=0.4, label='Pred Mesh')
+        
+        if p_j is not None:
+            ax2.scatter(p_j[:, 0], p_j[:, 1], p_j[:, 2], s=40, c='black', marker='x', label='Pred Joints / Scaffold')
 
-        if p_j.shape[0] == NUM_JOINTS:
-            # 3. Draw the 21-joint skeleton only when the checkpoint really outputs 21 joints
-            for finger in SKEL_CONNECTIONS:
-                ax2.plot(p_j[finger, 0], p_j[finger, 1], p_j[finger, 2], color='blue', linewidth=2)
-            ax2.set_title("3D Mesh + 21-Joint Skeleton")
+            if p_j.shape[0] == NUM_JOINTS:
+                for finger in SKEL_CONNECTIONS:
+                    ax2.plot(p_j[finger, 0], p_j[finger, 1], p_j[finger, 2], color='blue', linewidth=2)
+                ax2.set_title("3D Mesh + 21-Joint Skeleton")
+            else:
+                ax2.set_title(f"3D Mesh + {p_j.shape[0]} Checkpoint Scaffold Points")
         else:
-            ax2.set_title(f"3D Mesh + {p_j.shape[0]} Checkpoint Scaffold Points")
-    else:
-        ax2.set_title("3D Mesh Prediction")
-    set_axes_equal_3d(ax2, p_v)
-    ax2.view_init(elev=-90, azim=-90) # Match FreiHAND camera view
-    
-    ax2.legend(loc='upper right')
-    
-    plt.tight_layout()
-    plt.show()
+            ax2.set_title("3D Mesh Prediction")
+
+        set_axes_equal_3d(ax2, p_v)
+        ax2.invert_xaxis()  # Match the displayed photo's left-right orientation.
+        ax2.view_init(elev=-90, azim=-90)
+        ax2.legend(loc='upper right')
+        plt.tight_layout()
+        plt.show()
+
+
+if __name__ == "__main__":
+    run_eval_folder()

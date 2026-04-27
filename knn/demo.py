@@ -14,8 +14,8 @@ from mediapipe.tasks.python import vision as mp_vision
 # ── Paths / MediaPipe model ──────────────────────────────────────────────────
 
 REPO_ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LANDMARKER_PATH  = os.path.join(REPO_ROOT, "demo", "hand_landmarker.task")
-REFERENCES_PATH  = os.path.join(REPO_ROOT, "demo", "reference_poses.npz")
+LANDMARKER_PATH  = os.path.join(REPO_ROOT, "knn", "hand_landmarker.task")
+REFERENCES_PATH  = os.path.join(REPO_ROOT, "knn", "reference_poses.npz")
 LANDMARKER_URL   = (
     "https://storage.googleapis.com/mediapipe-models/"
     "hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"

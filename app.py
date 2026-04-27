@@ -133,10 +133,10 @@ def run_inference(model, device, image_np: np.ndarray):
 def render_eval_figure(
     image: np.ndarray,
 ):
-    fig = plt.figure(figsize=(5, 5))
+    fig = plt.figure(figsize=(6, 6))
     ax = fig.add_subplot(1, 1, 1)
     ax.imshow(image)
-    ax.set_title("Input image")
+    ax.set_title("Input image",fontsize=18, fontweight="bold", pad=12)
     ax.axis("off")
     fig.tight_layout()
     return fig
@@ -230,7 +230,12 @@ def render_interactive_eval_plot(
     radius = max(float(np.max(maxs - mins)) / 2.0, 0.25)
 
     fig.update_layout(
-        title="Prediction preview",
+        title={
+        "text": "Prediction Preview",
+        "font": {"size": 18, "weight": "bold"},
+        "x":0.5,
+        "xanchor": "center",
+    },
         margin={"l": 0, "r": 0, "t": 40, "b": 0},
         legend={"orientation": "h", "y": 1.02, "x": 0.0},
         scene={
@@ -574,6 +579,7 @@ def render_cluster_section(
     st.subheader(title)
     st.caption(f"{artifact_path.name} • split `{split}` • {len(cluster_ids)} clusters shown")
     st.info(guidance_text)
+    st.write("")
 
     lookup_state_key = f"{title}_lookup_index"
     if lookup_state_key not in st.session_state:
@@ -634,8 +640,8 @@ def render_cluster_section(
         header_suffix = " ← selected sample belongs here" if cluster_id == selected_cluster and cluster_visible else ""
         if cluster_id == selected_cluster and cluster_visible:
             st.markdown(
-                f"<div style='padding:0.4rem 0.6rem;border:2px solid #ff4b4b;border-radius:0.5rem;'>"
-                f"<strong>Cluster {cluster_id}</strong>  Top {count} representative samples{header_suffix}"
+                f"<div style='padding:0.4rem 0.6rem;border:2px solid #ff4b4b;border-radius:0.5rem;margin-bottom: 1rem;'>"
+                f"<strong>🔴Cluster {cluster_id}</strong>  Top {count} representative samples{header_suffix}"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -648,40 +654,47 @@ def render_cluster_section(
                     sample_idx = int(members[i])
                     similarity = float(scores[i])
                     st.image(images[sample_idx], use_container_width=True)
-                    caption = f"#{i + 1} • sim {similarity:.3f}"
+                    caption = f"#{i + 1} • similarity {similarity:.3f}"
                     if sample_idx == selected_index:
                         caption += " • selected"
                     st.caption(caption)
                 else:
                     st.empty()
+        st.divider()
         st.markdown("")
 
 
 def render_model_eval_tab():
     st.subheader("Model Prediction Demo")
+    st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
     dataset = load_eval_dataset(str(DEFAULT_EVAL_NPZ))
     num_samples = len(dataset["images"])
     default_index = int(st.session_state.get("eval_sample_index", 0))
 
-    c1, c2, c3 = st.columns([1, 1, 2])
+    c1, c2, c3 = st.columns([0.7, 0.7, 1.5])
     with c1:
+        st.write("")
         if st.button("Random sample", use_container_width=True):
             st.session_state["eval_sample_index"] = int(np.random.randint(0, num_samples))
     with c2:
+        st.write("")
         if st.button("Next sample", use_container_width=True):
             st.session_state["eval_sample_index"] = (int(st.session_state.get("eval_sample_index", 0)) + 1) % num_samples
     with c3:
+        st.markdown("Sample index")
         sample_index = st.slider(
-            "Sample index",
+            "",
             min_value=0,
             max_value=max(num_samples - 1, 0),
             value=int(st.session_state.get("eval_sample_index", default_index)),
+            label_visibility="collapsed",
         )
         st.session_state["eval_sample_index"] = sample_index
 
     with st.spinner("Running model inference..."):
         model, device = load_model(str(DEFAULT_CHECKPOINT))
         pred_joints, pred_vectors, pred_verts = run_inference(model, device, dataset["images"][sample_index])
+    st.markdown("<div style='margin-bottom: 1.8rem;'></div>", unsafe_allow_html=True)
 
     gt_joints = dataset["gt_joints"][sample_index].reshape(21, 3)
     gt_verts = dataset["gt_verts"][sample_index].reshape(-1, 3)
@@ -781,7 +794,7 @@ def render_cluster_tab(
 def render_live_pose_demo_tab():
     st.subheader("Live Hand Pose Demo")
     st.info(
-        "This is the Streamlit version of `demo/demo.py`. It runs a live webcam stream, detects a single hand "
+        "This is the Streamlit version of `knn/demo.py`. It runs a live webcam stream, detects a single hand "
         "with MediaPipe, builds the same hand-frame fingertip embedding, and overlays the best matching pose label."
     )
     ref_names, _ = load_reference_poses(str(DEFAULT_REFERENCE_POSES))
@@ -799,6 +812,8 @@ def render_live_pose_demo_tab():
 
 
 st.title("3D Hand Detection Demo")
+st.sidebar.markdown("## ⚙️ Display Settings")
+st.sidebar.caption("Adjust how many samples are shown per cluster.")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [

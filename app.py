@@ -31,8 +31,8 @@ DEFAULT_CHECKPOINT = REPO_ROOT / "scripts" / "checkpoints" / "model_600_verts_15
 DEFAULT_ANGLE_CLUSTER = REPO_ROOT / "clustering" / "train_camera_clusters_k8.npz"
 DEFAULT_POSE_CLUSTER = REPO_ROOT / "clustering" / "train_pose_clusters_k10.npz"
 DEFAULT_RETRIEVAL_INDEX = REPO_ROOT / "data" / "retrieval_index_600_verts.npz"
-DEFAULT_LANDMARKER_PATH = REPO_ROOT / "demo" / "hand_landmarker.task"
-DEFAULT_REFERENCE_POSES = REPO_ROOT / "demo" / "reference_poses.npz"
+DEFAULT_LANDMARKER_PATH = REPO_ROOT / "knn" / "hand_landmarker.task"
+DEFAULT_REFERENCE_POSES = REPO_ROOT / "knn" / "reference_poses.npz"
 DEFAULT_PHOTO_DEMO_DIR = REPO_ROOT / "demo" / "photo_demo_images"
 
 SKEL_CONNECTIONS = [

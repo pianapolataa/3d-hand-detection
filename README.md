@@ -58,7 +58,7 @@ The app currently includes:
 - hand-pose clustering demo
 - live knn hand-pose retrieval webcam demo
 
-## Webcam Hand Pose Detection Demo
+## KNN Webcam Hand Pose Detection Demo
 
 For the standalone OpenCV demo of our knn hand pose detection:
 
@@ -84,6 +84,12 @@ Controls:
 
 - `Q` quit
 - `R` recalibrate
+
+We provide a pre-built retrieval index from the data that can be directly used, built using:
+
+```bash
+python knn/build_index.py
+```
 
 ## Model Evaluation
 
@@ -122,39 +128,6 @@ python clustering/pose_clustering_eval.py \
 
 Expected behavior:
 hands in each cluster should generally share a similar pose, even when the camera orientation differs.
-
-## KNN Webcam Hand Pose Detection Demo
-
-For the standalone OpenCV demo of our knn hand pose retrieval:
-
-```bash
-python demo/demo.py
-```
-
-We provide a predefined list of hand poses for the following poses, and the script automatically retrieves the closest of these poses to the camera input:
-
-- `FIST`
-- `OPEN_PALM`
-- `PEACE`
-- `THUMBS_UP`
-- `POINT`
-
-You can force recalibration with:
-
-```bash
-python demo/demo.py --collect
-```
-
-Controls:
-
-- `Q` quit
-- `R` recalibrate
-
-We provide a pre-built retrieval index from the data that can be directly used, built using:
-
-```bash
-python knn/build_index.py
-```
 
 ## Notes
 

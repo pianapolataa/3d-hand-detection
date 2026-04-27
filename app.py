@@ -31,8 +31,9 @@ DEFAULT_CHECKPOINT = REPO_ROOT / "scripts" / "checkpoints" / "model_600_verts_15
 DEFAULT_ANGLE_CLUSTER = REPO_ROOT / "clustering" / "train_camera_clusters_k8.npz"
 DEFAULT_POSE_CLUSTER = REPO_ROOT / "clustering" / "train_pose_clusters_k10.npz"
 DEFAULT_RETRIEVAL_INDEX = REPO_ROOT / "data" / "retrieval_index_600_verts.npz"
-DEFAULT_LANDMARKER_PATH = REPO_ROOT / "knn" / "hand_landmarker.task"
-DEFAULT_REFERENCE_POSES = REPO_ROOT / "knn" / "reference_poses.npz"
+DEFAULT_LANDMARKER_PATH = REPO_ROOT / "demo" / "hand_landmarker.task"
+DEFAULT_REFERENCE_POSES = REPO_ROOT / "demo" / "reference_poses.npz"
+DEFAULT_PHOTO_DEMO_DIR = REPO_ROOT / "demo" / "photo_demo_images"
 
 SKEL_CONNECTIONS = [
     [0, 1, 2, 3, 4],
@@ -238,7 +239,7 @@ def render_interactive_eval_plot(
         margin={"l": 0, "r": 0, "t": 40, "b": 0},
         legend={"orientation": "h", "y": 1.02, "x": 0.0},
         scene={
-            "xaxis": {"visible": False, "range": [center[0] - radius, center[0] + radius]},
+            "xaxis": {"visible": False, "range": [center[0] + radius, center[0] - radius]},
             "yaxis": {"visible": False, "range": [center[1] - radius, center[1] + radius]},
             "zaxis": {"visible": False, "range": [center[2] - radius, center[2] + radius]},
             "aspectmode": "cube",
@@ -706,6 +707,61 @@ def render_model_eval_tab():
         st.plotly_chart(plotly_fig, use_container_width=True)
 
 
+# --- Photo Demo Tab ---
+def load_photo_demo_image(image_path: Path, image_size: int = 224) -> tuple[np.ndarray, np.ndarray]:
+    """Load a demo photo and resize it to the model's expected 224x224 RGB input."""
+    original = Image.open(image_path).convert("RGB")
+    model_input = original.resize((image_size, image_size))
+    return np.array(original), np.array(model_input)
+
+
+def list_photo_demo_images(photo_dir: Path) -> list[Path]:
+    valid_suffixes = {".png", ".jpg", ".jpeg"}
+    if not photo_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in photo_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in valid_suffixes
+    )
+
+
+def render_photo_demo_tab():
+    st.subheader("Photo Prediction Demo")
+    st.info(
+        "Select one of our prepared real photos to inspect where the RGB → 3D point-cloud model works well "
+        "and where it fails. The selected photo is resized to the same 224×224 model input format used by "
+        "the first model prediction demo."
+    )
+
+    image_paths = list_photo_demo_images(DEFAULT_PHOTO_DEMO_DIR)
+    if not image_paths:
+        st.warning(
+            "No demo photos found yet. Add a few .png/.jpg images to `demo/photo_demo_images/`, "
+            "then rerun the app."
+        )
+        return
+
+    labels = [path.stem.replace("_", " ").title() for path in image_paths]
+    selected_label = st.selectbox("Choose a test photo", labels)
+    selected_path = image_paths[labels.index(selected_label)]
+
+    original_image, model_input = load_photo_demo_image(selected_path)
+
+    with st.spinner("Running model inference on selected photo..."):
+        model, device = load_model(str(DEFAULT_CHECKPOINT))
+        pred_joints, pred_vectors, pred_verts = run_inference(model, device, model_input)
+
+    left_col, right_col = st.columns([1, 1.35], gap="medium")
+    with left_col:
+        st.image(original_image, caption=f"Original photo: {selected_path.name}", use_container_width=True)
+        with st.expander("Show resized 224×224 model input"):
+            st.image(model_input, caption="Model input", use_container_width=True)
+    with right_col:
+        plotly_fig = render_interactive_eval_plot(pred_joints, pred_vectors, pred_verts)
+        st.plotly_chart(plotly_fig, use_container_width=True)
+
+
 def render_cluster_tab(
     title: str,
     artifact_path: Path,
@@ -765,7 +821,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
         "Angle Clustering",
         "Pose Clustering",
         "Live Pose Demo",
-        "Future Demo 2",
+        "Photo Demo",
     ]
 )
 
@@ -801,4 +857,4 @@ with tab4:
     render_live_pose_demo_tab()
 
 with tab5:
-    st.info("Reserved for another upcoming demo module.")
+    render_photo_demo_tab()

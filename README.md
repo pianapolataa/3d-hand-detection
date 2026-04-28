@@ -98,9 +98,10 @@ To run the original local eval script of our RGB -> point cloud detection model:
 ```bash
 python scripts/eval.py
 ```
-Which was trained using the script
+Which was trained using
 ```
-python scripts/train.py
+cd scripts
+python train.py
 ```
 
 ## Clustering Demos
